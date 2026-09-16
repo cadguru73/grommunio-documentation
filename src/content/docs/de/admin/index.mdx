@@ -1,0 +1,52 @@
+---
+title: "grommunio Administration"
+description: "Das Administratorhandbuch für grommunio – Installation, Konfiguration, Betrieb, Skalierung und Migration der Groupware-Suite."
+sidebar:
+  label: "Übersicht"
+  order: 0
+---
+
+Alles, was Sie für die **Bereitstellung, den Betrieb und die Skalierung von grommunio** benötigen – vom ersten
+Start von appliance bis hin zu hochverfügbaren Clustern mit mehreren Knoten. grommunio ist eine umfassende
+Kommunikations- und Kollaborationssuite (E-Mail, Kalender, Kontakte, Aufgaben,
+Notizen, Videokonferenzen, Chat und Dateiverwaltung).
+
+## Wo soll man anfangen?
+
+Sind Sie neu bei grommunio? Lesen Sie die **[Einführung](/admin/introduction/)**, um sich mit den
+Grundlagen vertraut zu machen, und folgen Sie anschließend dem **[Schnellstart](/admin/quickstart/)**, um ein
+appliance einzurichten und die erste Anmeldung durchzuführen – oder wählen Sie aus den untenstehenden Karten die Installationsmethode aus, die zu Ihrer
+Umgebung passt.
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard title="Einleitung" href="/admin/introduction/" description="Was grommunio ist, aus welchen Komponenten es besteht und wie die einzelnen Teile zusammenpassen." />
+  <LinkCard title="Schnellstart" href="/admin/quickstart/" description="Richten Sie ein grommunio Appliance ein und melden Sie sich innerhalb weniger Minuten zum ersten Mal an." />
+  <LinkCard title="Geführte Installation" href="/admin/installation/" description="Die vollständige Schritt-für-Schritt-Anleitung für appliance (ISO/OVA) mit dem CUI-Einrichtungsassistenten." />
+  <LinkCard title="Manuelle Installation" href="/admin/manual_core/" description="Installieren Sie die Basis- und Kernpakete manuell, um benutzerdefinierte Integrationen durchzuführen." />
+  <LinkCard title="Container-Installation" href="/admin/container_core/" description="Führen Sie grommunio zusammen mit Docker Compose (gromox-Container) aus." />
+  <LinkCard title="Verwaltung" href="/admin/administration/" description="Laufende Verwaltung in der Admin-Benutzeroberfläche – Domänen, Benutzer, Rollen, Konfiguration." />
+  <LinkCard title="Architektur" href="/admin/architecture/" description="Komponenten, Protokolle, das Multi-Server-Design und Beispiele für Lastverteiler." />
+  <LinkCard title="Hohe Verfügbarkeit" href="/admin/high-availability/" description="Ein Referenz-Cluster vom Typ Pacemaker/DRBD mit einer Floating-IP." />
+  <LinkCard title="Einrichtungsleitfäden" href="/guides/" description="Schritt-für-Schritt-Anleitungen für Antispam, SSO, Meet, Chat, Files & Office, Archive, mobile Geräte und Backup." />
+  <LinkCard title="Befehlszeile (CLI)" href="/cli/" description="Verwaltung des grommunio über die Shell – grommunio-admin und die gromox-*-Tools." />
+  <LinkCard title="Migration" href="/migration/" description="Verschieben Sie Postfächer aus Exchange, Kopano und anderen Systemen." />
+  <LinkCard title="Wissensdatenbank" href="/kb/" description="Konkrete Anleitungen und Tipps zur Fehlerbehebung für bestimmte Themen." />
+</CardGrid>
+
+## Zielgruppe
+
+Dieses Handbuch richtet sich an **Systemadministratoren**, die grommunio installieren und betreiben.
+Es setzt Folgendes voraus:
+
+- Kenntnisse in den Bereichen Linux, E-Mail (z. B. SMTP), Netzwerke und DNS.
+- Allgemeine Vertrautheit mit dem Betriebssystem Linux.
+- Erfahrung in der Verwaltung von Kommunikations- und/oder Kollaborationslösungen.
+
+## Offline-Lesen
+
+Dieser Abschnitt steht auch zum Herunterladen für die Offline-Nutzung zur Verfügung:
+
+- [Als PDF herunterladen](/pdf/grommunio-admin.pdf)
+- [Als EPUB herunterladen](/epub/grommunio-admin.epub)

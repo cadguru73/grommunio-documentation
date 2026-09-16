@@ -1,113 +1,89 @@
 #!/bin/bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# SPDX-FileCopyrightText: 2022 grommunio GmbH
-#set -x # debug
-set -e # fail deployment if something goes wrong
-export SHELLOPTS
+# SPDX-FileCopyrightText: 2026 grommunio GmbH
+#
+# Build & deploy the grommunio documentation (Astro + Starlight).
+#
+# Pipeline:
+#   1. install dependencies
+#   2. refresh auto-generated content (Gromox man pages, admin CLI, OpenAPI spec)
+#   3. build the static site (Astro build + Pagefind search index)
+#   4. optional PDF / EPUB exports          (MAKE_PDF=1 / MAKE_EPUB=1)
+#   5. optional publish + nginx reload       (PUBLISH=1)
+#
+# Examples:
+#   ./deploy                       # build only, output in dist/
+#   MAKE_PDF=1 MAKE_EPUB=1 ./deploy
+#   TRANSLATE=1 ./deploy           # also DeepL-translate locales (needs DEEPL_API_KEY)
+#   MAKE_PDF=1 PUBLISH=1 ./deploy  # full build + publish to the web root
+set -euo pipefail
 
+cd "$(dirname "$0")"
 
-DOCU_ROOT="/srv/www/vhosts/docs.grommunio.com/htdocs"
+DOCU_ROOT="${DOCU_ROOT:-/srv/www/vhosts/docs.grommunio.com/htdocs}"
 
-DOC_RELEASE="`date +%y.%m`"
-DOC_RELEASEFULL="`date +%Y.%m.%d`"
+# The build version is derived from the checked-out commit by src/version.mjs —
+# see that file. Exporting DOC_VERSION here overrides it for one-off builds:
+#   DOC_VERSION=2026.08.04 ./deploy
+export DOC_VERSION="${DOC_VERSION:-}"
+[ -n "${DOC_VERSION}" ] || unset DOC_VERSION
 
-declare -a AVAIL_MANUAL=("main" "admin" "user" "web" "man" "dev" "migration" "kb")
+echo "==> Installing dependencies"
+if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
-if [ -z "$1" ]; then
-	declare -a BUILD_MANUAL=("main" "admin" "user" "web" "man" "dev" "migration" "kb")
-elif [[ ! " ${AVAIL_MANUAL[@]} " =~ " ${1} " ]]; then
-	echo "Manual \"$1\" is unknown. Valid manuals:"
-	printf '%s\n' "${AVAIL_MANUAL[@]}" | sed 's#^#-> #'
-	exit 1
-else
-	declare -a BUILD_MANUAL=("$1")
+echo "==> Refreshing auto-generated content (man pages, admin CLI, OpenAPI)"
+npm run gen:all
+
+if [ -n "${TRANSLATE:-}" ]; then
+  echo "==> Auto-translating non-English locales (DeepL)"
+  npm run translate
 fi
 
-for MANUAL in ${BUILD_MANUAL[@]}; do
-	sed -i "s#^version =.*#version = \'${DOC_RELEASE}\'##g" ${MANUAL}/conf.py
-	sed -i "s#^release =.*#release = \'${DOC_RELEASEFULL}\'##g" ${MANUAL}/conf.py
+echo "==> Building static site (version $(node src/version.mjs))"
+npm run build
 
-	if [ "${MANUAL}" == "man" ]; then
-		pushd man
-			./generate-man-pages.sh
-		popd
-	elif [ "${MANUAL}" == "dev" ]; then
-		pushd dev
-			./fetch-current-openapi.sh
-		popd
-	elif [ "${MANUAL}" == "admin" ]; then
-		pushd admin
-			./do-admin-cli.sh
-		popd
-	fi
+echo "==> Checking internal links"
+npm run check:links
 
-	for RSTFILE in ${MANUAL}/*.rst; do
-		if [[ ! " ${RSTFILE} " =~ " ${MANUAL}/legal_notice.rst " ]]; then
-			echo '' >> ${RSTFILE}
-			cat ${MANUAL}/meta.txt >> ${RSTFILE}
-		fi
-	done
-
-	cp -av resources/_templates/legal_notice.rst "${MANUAL}/legal_notice.rst"
-
-	make html DOCDIR=${MANUAL} BUILDDIR=${MANUAL}-build
-	# ref: https://web.dev/font-display/
-	sed -i 's#@font-face{#@font-face{font-display:swap;#' ${MANUAL}-build/html/_static/css/badge_only.css ${MANUAL}-build/html/_static/css/theme.css
-	# ref: https://web.dev/render-blocking-resources
-	sed -i -e 's#rel="stylesheet" href="_static/pygments.css" type="text/css"#rel="preload" href="_static/pygments.css" as="style" crossOrigin="anonymous" onload='this.rel=\'stylesheet\''#' ${MANUAL}-build/html/*.html
-
-	if [ "${MANUAL}" == "dev" ]; then
-		sed -i -e 's#<body>#<body><style>.operation-samples[_ngcontent-c9]{width:0%;background:none!important;}.operation-content[_ngcontent-c9]{width:90%;!important;}.background-actual[_ngcontent-c0]{background:none!important;}[sticky-sidebar][_ngcontent-c0]{max-width:90%;}.selected-tag[_ngcontent-c4]{margin-left:20px;}</style>#' ${MANUAL}-build/html/adminapispec.html
-	fi
-
-	if [ "${MANUAL}" != "main" ] && [ -n "$MAKE_PDF" ]; then
-		mkdir -p ${MANUAL}-build/latex
-		rsync -av resources/_static/img/back_a4.png ${MANUAL}-build/latex/background.png
-		rsync -av resources/_static/pdf/finalpage.pdf ${MANUAL}-build/latex/finalpage.pdf
-		if ! make latexpdf O="-D smartquotes_action=" DOCDIR=${MANUAL} BUILDDIR=${MANUAL}-build; then
-			if test -z "$IGNORE_PDF"; then
-				exit 1
-			fi
-		fi
-	fi
-	if [ "${MANUAL}" != "main" ] && [ -n "$MAKE_EPUB" ]; then
-		if ! make epub DOCDIR=${MANUAL} BUILDDIR=${MANUAL}-build; then
-			if test -z "$IGNORE_EPUB"; then
-				exit 1
-			fi
-		fi
-	fi
-done
-
-if [ -z "$PUBLISH" ]; then
-	exit 0
+if [ -n "${MAKE_PDF:-}" ]; then
+  echo "==> Generating per-book PDFs"
+  npm run pdf
+fi
+if [ -n "${MAKE_EPUB:-}" ]; then
+  echo "==> Generating per-book EPUBs"
+  npm run epub
 fi
 
-for MANUAL in ${BUILD_MANUAL[@]}; do
-	if [ "${MANUAL}" != "main" ]; then
-		rm -rf $DOCU_ROOT/${MANUAL}
-		mkdir -p $DOCU_ROOT/${MANUAL}
-		rsync -av ${MANUAL}-build/html/ $DOCU_ROOT/${MANUAL}/
-		if [[ -f ${MANUAL}-build/latex/grommunio.pdf ]]; then
-			rsync -av ${MANUAL}-build/latex/grommunio.pdf $DOCU_ROOT/grommunio${MANUAL^}Doc.pdf
-		fi
-		if [[ -f ${MANUAL}-build/epub/grommunio.epub ]]; then
-			rsync -av ${MANUAL}-build/epub/grommunio.epub $DOCU_ROOT/grommunio${MANUAL^}Doc.epub
-		fi
-	else
-		mkdir -p $DOCU_ROOT
-		rsync -av ${MANUAL}-build/html/ $DOCU_ROOT/
-	fi
+if [ -z "${PUBLISH:-}" ]; then
+  echo "==> Build complete -> dist/  (set PUBLISH=1 to publish to ${DOCU_ROOT})"
+  exit 0
+fi
 
-	METALINECOUNT=0
-	for RSTFILE in ${MANUAL}/*.rst; do
-		if [[ ! "${RSTFILE}" = "${MANUAL}/legal_notice.rst" ]]; then
-			METALINECOUNT=`<${MANUAL}/meta.txt wc -l`
-			sed -i "$(( $(wc -l <${RSTFILE})-${METALINECOUNT} )),$ d" ${RSTFILE}
-		fi
-	done
+# Sanity gate. `rsync --delete` mirrors deletions onto the live site, so a build
+# that came out short — an upstream outage emptying a generated section, a
+# half-finished build — would remove those pages from production. The generators
+# now refuse to publish a degraded tree themselves (scripts/lib/outdir.mjs);
+# this is the last check before anything is overwritten.
+NEW_PAGES=$(find dist -type f -name '*.html' | wc -l)
+echo "==> Built ${NEW_PAGES} HTML files"
 
-	#rm -rf "${MANUAL}-build"
-done
+if [ "${NEW_PAGES}" -lt 100 ]; then
+  echo "!! Refusing to publish: only ${NEW_PAGES} HTML files in dist/ — the build looks incomplete." >&2
+  exit 1
+fi
 
-systemctl restart nginx
+if [ -d "${DOCU_ROOT}" ]; then
+  LIVE_PAGES=$(find "${DOCU_ROOT}" -type f -name '*.html' 2>/dev/null | wc -l)
+  if [ "${LIVE_PAGES}" -gt 0 ] && [ "${NEW_PAGES}" -lt $(( LIVE_PAGES * 90 / 100 )) ]; then
+    echo "!! Refusing to publish: ${NEW_PAGES} pages built vs ${LIVE_PAGES} currently live (>10% loss)." >&2
+    echo "   If the removal is intentional, re-run with FORCE_PUBLISH=1." >&2
+    [ -n "${FORCE_PUBLISH:-}" ] || exit 1
+    echo "   FORCE_PUBLISH=1 set — continuing anyway." >&2
+  fi
+fi
+
+echo "==> Publishing to ${DOCU_ROOT}"
+mkdir -p "${DOCU_ROOT}"
+rsync -a --delete dist/ "${DOCU_ROOT}/"
+systemctl reload nginx
+echo "==> Deployed."

@@ -1,0 +1,57 @@
+flowchart TD
+  user(["User"])
+  subgraph MUA["MUA / Protocol"]
+    direction TB
+    SMTP["SMTP"]
+    POP3["POP3"]
+    IMAP["IMAP"]
+    Web["Web"]
+    EWS["EWS"]
+    EAS["EAS"]
+    DAV["DAV"]
+    Outlook["Outlook<br/>RPC/HTTP · MAPI/HTTP"]
+  end
+  subgraph EXT["External"]
+    Internet(["Internet"]):::ext
+    Postfix["postfix &<br/>grommunio-antispam"]:::ext
+  end
+  subgraph GROMOX["Gromox"]
+    pop3svc["pop3"]
+    imapsvc["imap"]
+    midb["midb"]
+    zcore["zcore"]
+    phpmapi(["php-mapi"])
+    delivery["delivery"]
+    queue(["queue"])
+    gqd["gromox-queue-delivery"]
+    event["event"]
+    subgraph HTTP["gromox-http"]
+      mh["mh"]
+      emsmdb["emsmdb"]
+      rpchttp["rpchttp"]
+      ews["ews"]
+      exmdb[("exmdb:5000")]
+    end
+  end
+
+  user --> SMTP & POP3 & IMAP & Web & EWS & EAS & DAV & Outlook
+  POP3 --> pop3svc --> midb
+  IMAP --> imapsvc --> midb
+  Web --> phpmapi
+  EAS --> phpmapi
+  DAV --> phpmapi
+  EWS --> ews
+  Outlook --> mh
+  Outlook --> emsmdb
+  Outlook --> rpchttp
+  phpmapi --> zcore
+  mh --> exmdb
+  emsmdb --> exmdb
+  rpchttp --> exmdb
+  ews --> exmdb
+  midb --> exmdb
+  zcore --> exmdb
+  SMTP --> Postfix
+  Internet <--> Postfix
+  Postfix --> gqd --> queue --> delivery --> exmdb
+  event --> exmdb

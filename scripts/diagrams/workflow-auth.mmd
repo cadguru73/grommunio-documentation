@@ -1,0 +1,36 @@
+flowchart TD
+  subgraph CLIENTS["Clients"]
+    direction LR
+    web["grommunio-web"]
+    outlook["Outlook<br/>MAPI · RPC · EWS"]
+    imapc["IMAP"]
+    pop3c["POP3"]
+    easc["EAS"]
+    davc["CalDAV / CardDAV"]
+  end
+  gromox["gromox-* services<br/>http · imap · pop3 · zcore"]
+  postfix["postfix · SMTP"]:::ext
+  meet["grommunio-meet"]
+  chat["grommunio-chat"]
+  saslauthd["saslauthd"]:::ext
+  pam["pam"]:::ext
+  authmgr["authmgr"]
+  mysql["MySQL / MariaDB<br/>internal users"]:::ext
+  subgraph EXTAUTH["External auth · optional (if configured)"]
+    direction LR
+    ldap["Active Directory / LDAP"]:::ext
+    krb["Kerberos"]:::ext
+    oidc["grommunio-keycloak / OIDC"]
+  end
+
+  CLIENTS --> gromox
+  gromox --> authmgr
+  postfix --> saslauthd
+  meet --> saslauthd
+  chat --> pam
+  saslauthd --> pam
+  pam --> authmgr
+  authmgr -->|internal| mysql
+  authmgr -. optional .-> ldap
+  authmgr -. optional .-> krb
+  authmgr -. optional .-> oidc

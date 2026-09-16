@@ -1,0 +1,26 @@
+flowchart TB
+  clients["Clients<br/>Web · IMAP / POP3 · SMTP · EAS · CalDAV / CardDAV"]
+  dns["DNS · grommunio.example.com"]
+  vip["Floating VIP · 10.0.0.10/24<br/>Pacemaker IPaddr2"]
+  clients --> dns --> vip
+
+  subgraph cluster["Pacemaker / Corosync cluster — quorum across all three nodes"]
+    direction LR
+    subgraph n1["node1 · ACTIVE"]
+      direction TB
+      d1["DRBD primary · /dev/drbd0"]
+      m1["/grodata · XFS"]
+      b1["bind-mounts → /var/lib/*"]
+      svc["grommunio_svc<br/>MariaDB · Redis · php-fpm<br/>gromox-* · admin-api · nginx · antispam"]
+      d1 --> m1 --> b1 --> svc
+    end
+    subgraph n2["node2 · STANDBY"]
+      direction TB
+      d2["DRBD secondary<br/>services stopped<br/>ready to take over"]:::ext
+    end
+    witness["node3 · WITNESS<br/>quorum only<br/>no data · no services"]:::security
+    d1 <== "DRBD replication" ==> d2
+    n2 ~~~ witness
+  end
+
+  vip ==>|active node| n1

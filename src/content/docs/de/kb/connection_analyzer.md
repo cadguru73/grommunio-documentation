@@ -1,0 +1,38 @@
+---
+title: "Verbindungsanalysator"
+description: "Wenn der private Schlüssel des Serverzertifikats vom Typ RSA ist, ist alles in Ordnung:"
+sidebar:
+  order: 50
+---
+
+## Unsinnige Überprüfung auf feste RSA-Verschlüsselungsarten
+
+Wenn der private Schlüssel des Serverzertifikats vom Typ RSA ist, ist alles in Ordnung:
+
+``` text
+$ openssl s_client -no_tls1_3 -connect mail.grommunio.com:443
+ 0 s:CN = mail.grommunio.com
+   i:C = US, O = Let's Encrypt, CN = R3
+   a:PKEY: rsaEncryption, 2048 (bit); sigalg: RSA-SHA256
+   v:NotBefore: Aug 27 21:02:07 2024 GMT; NotAfter: Nov 25 21:02:06 2024 GMT
+    ...
+    Protocol  : TLSv1.2
+    Cipher    : ECDHE-RSA-AES256-GCM-SHA384
+```
+
+![](/img/connan_rsa.png)
+
+Let's Encrypt (certbot) erzeugt ECDSA-Signaturen, was bedeutet, dass die Verschlüsselungsalgorithmen stattdessen ECDHE-ECDSA sind, und der Connection Analyzer verhält sich völlig unsinnig.
+
+``` text
+$ openssl s_client -no_tls1_3 -connect a4.inai.de:443
+ 0 s:CN = a4.inai.de
+   i:C = US, O = Let's Encrypt, CN = R3
+   a:PKEY: id-ecPublicKey, 256 (bit); sigalg: RSA-SHA256
+   v:NotBefore: Sep 23 22:10:43 2024 GMT; NotAfter: Dec 22 22:10:42 2024 GMT
+    ...
+    Protocol  : TLSv1.2
+    Cipher    : ECDHE-ECDSA-AES256-GCM-SHA384
+```
+
+![](/img/connan_dsa.png)

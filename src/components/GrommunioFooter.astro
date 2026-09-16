@@ -1,0 +1,210 @@
+---
+/**
+ * grommunio-branded site footer, styled after grommunio.com.
+ * Rendered full-width (as a child of .main-frame) via the PageFrame override,
+ * so it spans the content + table-of-contents and closes up to the sidebar.
+ */
+import { DOC_VERSION, DOC_COMMIT, DOC_DIRTY, DOC_COMMIT_URL } from '../version.mjs';
+
+const year = new Date().getFullYear();
+
+type FooterLink = { label: string; href: string; external?: boolean };
+const columns: { title: string; links: FooterLink[] }[] = [
+  {
+    title: 'Documentation',
+    links: [
+      { label: 'Administration', href: '/admin/' },
+      { label: 'User Guide', href: '/user/' },
+      { label: 'grommunio Web', href: '/web/' },
+      { label: 'Man Pages', href: '/man/' },
+    ],
+  },
+  {
+    title: 'More',
+    links: [
+      { label: 'Migration', href: '/migration/' },
+      { label: 'Knowledge Base', href: '/kb/' },
+      { label: 'Command-line (CLI)', href: '/cli/' },
+      { label: 'Developer & API', href: '/dev/' },
+      { label: 'Legal notice & attributions', href: '/legal/' },
+    ],
+  },
+  {
+    title: 'grommunio',
+    links: [
+      { label: 'Home', href: 'https://grommunio.com', external: true },
+      { label: 'Community', href: 'https://community.grommunio.com', external: true },
+      { label: 'Partner Portal', href: 'https://portal.grommunio.com', external: true },
+      { label: 'Contact', href: 'https://grommunio.com/contact/', external: true },
+    ],
+  },
+];
+
+// Locale-aware: on /de/ pages, prefix internal links and translate the labels.
+const isDe = /^\/de(\/|$)/.test(Astro.url.pathname);
+const pfx = (l: FooterLink) => (isDe && l.href.startsWith('/') ? `/de${l.href}` : l.href);
+const DE: Record<string, string> = {
+  Documentation: 'Dokumentation',
+  More: 'Mehr',
+  'User Guide': 'Benutzerhandbuch',
+  'Knowledge Base': 'Wissensdatenbank',
+  'Command-line (CLI)': 'Befehlszeile (CLI)',
+  'Developer & API': 'Entwickler & API',
+  'Legal notice & attributions': 'Impressum & Danksagungen',
+  Home: 'Startseite',
+  'Partner Portal': 'Partnerportal',
+  Contact: 'Kontakt',
+  'Docs version': 'Doku-Version',
+  'built from an uncommitted working tree':
+    'aus einem nicht committeten Arbeitsverzeichnis erstellt',
+  'Everything you need to deploy, operate and use grommunio.':
+    'Alles, was Sie für Bereitstellung, Betrieb und Nutzung von grommunio brauchen.',
+  'Made with care in the EU.': 'Mit Sorgfalt in der EU erstellt.',
+  copyright: 'Dokumentation lizenziert unter CC BY-SA 4.0 oder später.',
+};
+const t = (s: string) => (isDe && DE[s]) || s;
+---
+
+<footer class="gx-footer not-content">
+  <div class="gx-footer__inner">
+    <div class="gx-footer__brand">
+      <a href="https://grommunio.com" aria-label="grommunio">
+        <img src="/brand/grommunio-logo.svg" width="167" height="40" alt="grommunio" class="gx-footer__logo for-dark" />
+        <img src="/brand/grommunio-logo-dark.svg" width="167" height="40" alt="grommunio" class="gx-footer__logo for-light" />
+      </a>
+      <p>{t('Everything you need to deploy, operate and use grommunio.')}</p>
+    </div>
+    <nav class="gx-footer__cols" aria-label="Footer">
+      {columns.map((col) => (
+        <div>
+          <h2>{t(col.title)}</h2>
+          <ul>
+            {col.links.map((l) => (
+              <li>
+                <a
+                  href={pfx(l)}
+                  target={l.external ? '_blank' : undefined}
+                  rel={l.external ? 'noopener noreferrer' : undefined}
+                >{t(l.label)}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </nav>
+  </div>
+  <div class="gx-footer__bar">
+    <p>© {year} grommunio GmbH. {isDe ? DE.copyright : 'Documentation licensed CC BY-SA 4.0 or later.'}</p>
+    <p class="gx-footer__made">
+      <span class="gx-footer__version">
+        {t('Docs version')}{' '}
+        {DOC_COMMIT_URL ? (
+          <a href={DOC_COMMIT_URL} target="_blank" rel="noopener noreferrer">
+            {DOC_VERSION}<span class="gx-footer__sha">{' · '}{DOC_COMMIT}</span>
+          </a>
+        ) : (
+          DOC_VERSION
+        )}
+        {DOC_DIRTY && <span class="gx-footer__dirty" title={t('built from an uncommitted working tree')}>+dev</span>}
+      </span>
+      <span aria-hidden="true"> · </span>
+      {t('Made with care in the EU.')}
+    </p>
+  </div>
+</footer>
+
+<style>
+  .gx-footer {
+    margin-top: 3rem;
+    border-top: 1px solid var(--sl-color-hairline-light);
+    background: var(--sl-color-bg-sidebar);
+    /* Sit above the fixed table-of-contents (its full-height left border would
+       otherwise show through the footer). */
+    position: relative;
+    z-index: 50;
+  }
+  .gx-footer__logo { height: 2rem; width: auto; }
+  .gx-footer__logo.for-light { display: none; }
+  :root[data-theme='light'] .gx-footer__logo.for-dark { display: none; }
+  :root[data-theme='light'] .gx-footer__logo.for-light { display: inline; }
+
+  .gx-footer__inner {
+    display: grid;
+    gap: 2.5rem;
+    padding: 3rem 1.5rem 2rem;
+    max-width: var(--sl-content-width);
+    margin-inline: 0;
+  }
+  @media (min-width: 50rem) {
+    .gx-footer__inner { grid-template-columns: 1.2fr 2fr; }
+  }
+  .gx-footer__brand p {
+    margin-top: 0.85rem;
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-sm);
+    max-width: 24rem;
+  }
+  .gx-footer__cols {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+  }
+  .gx-footer__cols h2 {
+    font-size: var(--sl-text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--sl-color-white);
+    margin-bottom: 0.75rem;
+  }
+  .gx-footer__cols ul { list-style: none; padding: 0; margin: 0; }
+  .gx-footer__cols li { margin: 0.4rem 0; }
+  .gx-footer__cols a {
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-sm);
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+  .gx-footer__cols a:hover { color: var(--gx-azure-300); }
+  :root[data-theme='light'] .gx-footer__cols a:hover { color: var(--gx-azure-700); }
+  .gx-footer__bar {
+    border-top: 1px solid var(--sl-color-hairline-light);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    justify-content: space-between;
+    padding: 1.25rem 1.5rem;
+    max-width: var(--sl-content-width);
+    margin-inline: 0;
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-xs);
+  }
+  .gx-footer__bar p { margin: 0; }
+
+  /* Build provenance: the calendar version links to the source revision it was
+     built from. The hash is hidden on narrow screens — it is a debugging aid,
+     the date is the part a reader cares about. */
+  .gx-footer__version a {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px dotted var(--sl-color-gray-4);
+  }
+  .gx-footer__version a:hover { color: var(--sl-color-white); }
+  .gx-footer__sha { opacity: 0.7; font-variant-numeric: tabular-nums; }
+  @media (max-width: 30rem) {
+    .gx-footer__sha { display: none; }
+  }
+  .gx-footer__dirty {
+    margin-inline-start: 0.35em;
+    padding: 0 0.35em;
+    border-radius: 0.25rem;
+    background: var(--sl-color-orange-low, #7a4b00);
+    color: var(--sl-color-white);
+  }
+
+  /* On the splash/home page there is no sidebar, so center the footer block;
+     content pages (with a sidebar) keep it left-aligned with the article. */
+  :root:not([data-has-sidebar]) .gx-footer__inner,
+  :root:not([data-has-sidebar]) .gx-footer__bar {
+    margin-inline: auto;
+  }
+</style>

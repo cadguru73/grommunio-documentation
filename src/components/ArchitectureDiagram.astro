@@ -1,0 +1,183 @@
+---
+/**
+ * Brand-styled, responsive grommunio component-architecture diagram.
+ * Replaces the legacy raster image with a themed (dark/light) layered layout.
+ * grommunio components are azure; general components are neutral; each layer
+ * carries its own accent hue for visual variety.
+ */
+const G = 'gx';   // grommunio component
+const N = 'gen';  // general component
+
+const top = [
+  { name: 'Scale / Network', accent: 'violet', items: [['HAProxy / LVS', N]] },
+];
+const appliance = [
+  { name: 'Delivery', accent: 'azure', items: [['nginx', N], ['Autodiscover / Autoconfig', G]] },
+  { name: 'Collaboration', accent: 'teal', items: [
+    ['grommunio-chat', G], ['grommunio-videobridge', G], ['grommunio-meet', G], ['coTURN', N], ['grommunio-files', G],
+  ] },
+  { name: 'Core', accent: 'azure', items: [
+    ['php-fpm pools', N], ['grommunio-sync', G], ['grommunio-adaptor', G], ['gromox-smtp', G],
+    ['gromox-delivery', G], ['gromox-lda', G], ['gromox-midb', G], ['grommunio-admin', G],
+    ['gromox-http', G], ['grommunio-web', G], ['gromox-imap / pop', G],
+  ] },
+  { name: 'Backend', accent: 'amber', items: [
+    ['LDAP / Active Directory', N], ['MySQL — central data', N], ['SQLite — user data', N],
+    ['Redis cache', N], ['grommunio Antispam', G], ['Postfix', N],
+  ] },
+];
+const bottom = [
+  { name: 'Infrastructure', accent: 'emerald', items: [['Storage — local / NFS / CIFS', N], ['Virtualization / Container', N]] },
+];
+---
+
+<figure class="gx-arch not-content">
+  <figcaption>grommunio component architecture</figcaption>
+
+  {top.map((l) => (
+    <div class="gx-arch__layer" data-accent={l.accent}>
+      <span class="gx-arch__name">{l.name}</span>
+      <div class="gx-arch__chips">
+        {l.items.map(([label, kind]) => <span class="gx-arch__chip" data-kind={kind}>{label}</span>)}
+      </div>
+    </div>
+  ))}
+
+  <div class="gx-arch__appliance">
+    <span class="gx-arch__badge">Appliance</span>
+    {appliance.map((l) => (
+      <div class="gx-arch__layer" data-accent={l.accent}>
+        <span class="gx-arch__name">{l.name}</span>
+        <div class="gx-arch__chips">
+          {l.items.map(([label, kind]) => <span class="gx-arch__chip" data-kind={kind}>{label}</span>)}
+        </div>
+      </div>
+    ))}
+  </div>
+
+  {bottom.map((l) => (
+    <div class="gx-arch__layer" data-accent={l.accent}>
+      <span class="gx-arch__name">{l.name}</span>
+      <div class="gx-arch__chips">
+        {l.items.map(([label, kind]) => <span class="gx-arch__chip" data-kind={kind}>{label}</span>)}
+      </div>
+    </div>
+  ))}
+
+  <div class="gx-arch__legend">
+    <span><i class="gx-arch__key" data-kind="gx"></i> grommunio component</span>
+    <span><i class="gx-arch__key" data-kind="gen"></i> general component</span>
+  </div>
+</figure>
+
+<style>
+  .gx-arch {
+    margin: 1.75rem 0;
+    padding: 1.25rem;
+    border-radius: var(--radius-2xl, 1rem);
+    border: 1px solid var(--sl-color-hairline-light);
+    background:
+      radial-gradient(120% 120% at 0% 0%, color-mix(in srgb, var(--gx-azure-500) 6%, transparent), transparent 60%),
+      var(--sl-color-bg-sidebar);
+  }
+  .gx-arch figcaption {
+    font-weight: 600;
+    color: var(--sl-color-white);
+    letter-spacing: -0.01em;
+    margin-bottom: 1rem;
+  }
+
+  .gx-arch__layer {
+    display: grid;
+    grid-template-columns: 9.5rem 1fr;
+    gap: 0.75rem;
+    align-items: center;
+    padding: 0.55rem 0;
+  }
+  .gx-arch__layer + .gx-arch__layer { border-top: 1px dashed var(--sl-color-hairline); }
+  .gx-arch__name {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--sl-color-gray-3);
+    padding-left: 0.6rem;
+    border-left: 3px solid var(--accent);
+  }
+  .gx-arch__layer[data-accent='azure']   { --accent: var(--gx-azure-400); }
+  .gx-arch__layer[data-accent='teal']    { --accent: var(--gx-teal-500); }
+  .gx-arch__layer[data-accent='violet']  { --accent: var(--gx-violet-500); }
+  .gx-arch__layer[data-accent='amber']   { --accent: var(--gx-amber-500); }
+  .gx-arch__layer[data-accent='emerald'] { --accent: var(--gx-emerald-500); }
+
+  .gx-arch__chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .gx-arch__chip {
+    font-size: 0.8rem;
+    line-height: 1.2;
+    padding: 0.3rem 0.6rem;
+    border-radius: 0.5rem;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .gx-arch__chip[data-kind='gx'] {
+    color: var(--gx-azure-200);
+    background: color-mix(in srgb, var(--gx-azure-500) 16%, transparent);
+    border-color: color-mix(in srgb, var(--gx-azure-400) 38%, transparent);
+  }
+  .gx-arch__chip[data-kind='gen'] {
+    color: var(--sl-color-gray-2);
+    background: color-mix(in srgb, var(--sl-color-gray-1) 7%, transparent);
+    border-color: var(--sl-color-hairline-light);
+  }
+  :root[data-theme='light'] .gx-arch__chip[data-kind='gx'] { color: var(--gx-azure-800); }
+
+  .gx-arch__appliance {
+    position: relative;
+    margin: 0.5rem 0;
+    padding: 0.4rem 0.9rem;
+    border: 1px solid color-mix(in srgb, var(--gx-azure-400) 35%, transparent);
+    border-radius: 0.9rem;
+    background: color-mix(in srgb, var(--gx-azure-500) 4%, transparent);
+  }
+  .gx-arch__badge {
+    position: absolute;
+    top: -0.7rem;
+    right: 0.9rem;
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    color: var(--gx-azure-200);
+    background: var(--sl-color-bg-sidebar);
+    border: 1px solid color-mix(in srgb, var(--gx-azure-400) 40%, transparent);
+  }
+  :root[data-theme='light'] .gx-arch__badge { color: var(--gx-azure-700); }
+
+  .gx-arch__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+    margin-top: 1rem;
+    padding-top: 0.85rem;
+    border-top: 1px solid var(--sl-color-hairline);
+    font-size: 0.78rem;
+    color: var(--sl-color-gray-3);
+  }
+  .gx-arch__legend span { display: inline-flex; align-items: center; gap: 0.45rem; }
+  .gx-arch__key { width: 0.85rem; height: 0.85rem; border-radius: 0.25rem; border: 1px solid; }
+  .gx-arch__key[data-kind='gx'] {
+    background: color-mix(in srgb, var(--gx-azure-500) 30%, transparent);
+    border-color: var(--gx-azure-400);
+  }
+  .gx-arch__key[data-kind='gen'] {
+    background: color-mix(in srgb, var(--sl-color-gray-1) 10%, transparent);
+    border-color: var(--sl-color-hairline-light);
+  }
+
+  @media (max-width: 36rem) {
+    .gx-arch__layer { grid-template-columns: 1fr; gap: 0.4rem; }
+    .gx-arch__name { border-left: none; padding-left: 0; }
+  }
+</style>

@@ -1,0 +1,514 @@
+/* ============================================================================
+   grommunio brand theme for Starlight
+   Maps the grommunio.com design tokens (azure / ink-navy / ember, Noto Sans,
+   frosted glass, brand glow) onto Starlight's --sl-* custom properties.
+   Token source: grommunio-website/src/styles/global.css
+   ========================================================================== */
+
+/* ----------------------------------------------------------------------------
+   Fonts — self-hosted Noto Sans (the grommunio brand face)
+---------------------------------------------------------------------------- */
+@font-face {
+  font-family: "Noto Sans";
+  src: url("/fonts/notosans-light.woff2") format("woff2");
+  font-weight: 300; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Noto Sans";
+  src: url("/fonts/notosans-regular.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Noto Sans";
+  src: url("/fonts/notosans-semibold.woff2") format("woff2");
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Noto Sans";
+  src: url("/fonts/notosans-bold.woff2") format("woff2");
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+
+/* ----------------------------------------------------------------------------
+   Brand palette (raw tokens — used by custom components + the mapping below)
+---------------------------------------------------------------------------- */
+:root {
+  --gx-azure-50:  #ecf8ff;
+  --gx-azure-100: #cfecff;
+  --gx-azure-200: #a6ddff;
+  --gx-azure-300: #66caff;
+  --gx-azure-400: #29b3f6;
+  --gx-azure-500: #009fe3;
+  --gx-azure-600: #007fc0;
+  --gx-azure-700: #0369a1;
+  --gx-azure-800: #075783;
+  --gx-azure-900: #0d486c;
+  --gx-azure-950: #082c46;
+
+  --gx-ink-50:  #eef2f8;
+  --gx-ink-100: #d4dcea;
+  --gx-ink-200: #aab9d2;
+  --gx-ink-300: #7589ab;
+  --gx-ink-400: #46587a;
+  --gx-ink-500: #283a5a;
+  --gx-ink-600: #1b2840;
+  --gx-ink-700: #131f30;
+  --gx-ink-800: #0c1625;
+  --gx-ink-900: #091321;
+  --gx-ink-950: #050b14;
+
+  --gx-ember-400: #e85d57;
+  --gx-ember-500: #d8423c;
+  --gx-ember-600: #bf322d;
+
+  /* Secondary accent hues — used sparingly to break up the blue:
+     teal (config params), emerald (tips/success), amber (caution),
+     violet (developer/API), for highlights and category coding. */
+  --gx-teal-300:   #2bd4c7;
+  --gx-teal-500:   #0fb5a6;
+  --gx-teal-700:   #0b7d72;
+  --gx-emerald-300:#5fe0a0;
+  --gx-emerald-500:#16a96a;
+  --gx-emerald-700:#0c6b45;
+  --gx-amber-300:  #fbcd6b;
+  --gx-amber-500:  #e0922b;
+  --gx-amber-700:  #9a6212;
+  --gx-violet-300: #b6a4ff;
+  --gx-violet-500: #8b6df0;
+  --gx-violet-700: #5b40b0;
+
+  /* logo cyan */
+  --gx-cyan: #2dcaff;
+
+  /* brand fonts */
+  --gx-font-sans: "Noto Sans", "Segoe UI", system-ui, -apple-system,
+    "Helvetica Neue", Arial, sans-serif;
+  --gx-font-mono: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo,
+    Consolas, monospace;
+
+  /* brand glow shadows */
+  --gx-shadow-glow: 0 0 0 1px color-mix(in srgb, var(--gx-azure-500) 25%, transparent),
+    0 18px 50px -12px color-mix(in srgb, var(--gx-azure-500) 45%, transparent);
+  --gx-ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ----------------------------------------------------------------------------
+   Starlight DARK theme (default) — mapped to the ink-navy + azure brand
+---------------------------------------------------------------------------- */
+:root {
+  --sl-font: var(--gx-font-sans);
+  --sl-font-mono: var(--gx-font-mono);
+
+  /* Use more of the available width — the default 45rem leaves a lot of empty
+     space on wide screens. This is a generous cap; the wide-screen rule below
+     lets the article fill the space between the sidebar and the table of
+     contents up to this width (suits our tables, code blocks and screenshots). */
+  --sl-content-width: 82rem;
+
+  /* accent (links, active sidebar item, focus) */
+  --sl-color-accent-low:  #0d486c;   /* azure-900 — subtle active bg */
+  --sl-color-accent:      #009fe3;   /* azure-500 — the grommunio cyan */
+  --sl-color-accent-high: #a6ddff;   /* azure-200 — link text on dark */
+
+  /* gray scale (light → dark) mapped onto the ink-navy ramp */
+  --sl-color-white:   #ffffff;
+  --sl-color-gray-1:  #eef2f8;       /* ink-50  — headings */
+  --sl-color-gray-2:  #d4dcea;       /* ink-100 — body text */
+  --sl-color-gray-3:  #7589ab;       /* ink-300 — muted text */
+  --sl-color-gray-4:  #46587a;       /* ink-400 — dim borders/icons */
+  --sl-color-gray-5:  #1b2840;       /* ink-600 — borders, inline-code bg */
+  --sl-color-gray-6:  #0c1625;       /* ink-800 — sidebar / nav surface */
+  --sl-color-black:   #091321;       /* ink-900 — content background */
+
+  /* surfaces */
+  --sl-color-bg:           #091321;
+  --sl-color-bg-nav:       color-mix(in srgb, var(--gx-ink-800) 86%, transparent);
+  --sl-color-bg-sidebar:   #0a1422;
+  --sl-color-bg-inline-code: color-mix(in srgb, var(--gx-azure-500) 12%, var(--gx-ink-800));
+  --sl-color-bg-accent:    var(--gx-azure-500);
+
+  --sl-color-hairline-light: color-mix(in srgb, white 9%, transparent);
+  --sl-color-hairline:       color-mix(in srgb, white 7%, transparent);
+  --sl-color-hairline-shade: color-mix(in srgb, black 40%, transparent);
+
+  --sl-color-text-accent: var(--gx-azure-300);
+  --sl-color-text-invert: var(--gx-ink-950);
+
+  /* shadows */
+  --sl-shadow-sm: 0 1px 0 0 rgb(255 255 255 / 0.04) inset, 0 8px 24px -16px rgb(0 0 0 / 0.7);
+  --sl-shadow-md: 0 1px 0 0 rgb(255 255 255 / 0.04) inset, 0 16px 40px -20px rgb(0 0 0 / 0.7);
+  --sl-shadow-lg: var(--gx-shadow-glow);
+}
+
+/* ----------------------------------------------------------------------------
+   Starlight LIGHT theme — inverted ink ramp, deeper azure for contrast
+---------------------------------------------------------------------------- */
+:root[data-theme='light'] {
+  --sl-color-accent-low:  #cfecff;   /* azure-100 */
+  --sl-color-accent:      #007fc0;   /* azure-600 */
+  --sl-color-accent-high: #075783;   /* azure-800 — link text on white */
+
+  --sl-color-white:   #091321;       /* strongest text */
+  --sl-color-gray-1:  #16233a;
+  --sl-color-gray-2:  #283a5a;       /* body text */
+  --sl-color-gray-3:  #46587a;       /* muted */
+  --sl-color-gray-4:  #7589ab;
+  --sl-color-gray-5:  #d4dcea;       /* borders, inline-code bg */
+  --sl-color-gray-6:  #eef2f8;       /* sidebar surface */
+  --sl-color-gray-7:  #f5f8fc;
+  --sl-color-black:   #ffffff;       /* page bg */
+
+  --sl-color-bg:           #ffffff;
+  --sl-color-bg-nav:       color-mix(in srgb, #ffffff 86%, transparent);
+  --sl-color-bg-sidebar:   #f5f8fc;
+  --sl-color-bg-inline-code: #e6eef7;
+
+  --sl-color-hairline-light: color-mix(in srgb, var(--gx-ink-900) 12%, transparent);
+  --sl-color-hairline:       color-mix(in srgb, var(--gx-ink-900) 8%, transparent);
+
+  --sl-color-text-accent: var(--gx-azure-700);
+}
+
+/* ----------------------------------------------------------------------------
+   Frosted-glass top nav — mirrors the website header treatment
+---------------------------------------------------------------------------- */
+header.header {
+  background: var(--sl-color-bg-nav);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--sl-color-hairline-light);
+}
+
+/* Site title / logo sizing */
+.site-title img,
+a.site-title img { height: 2rem; width: auto; }
+
+/* ----------------------------------------------------------------------------
+   Typography polish — match the website's heading weight / balance
+---------------------------------------------------------------------------- */
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.content-panel h1#_top {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.sl-markdown-content p { text-wrap: pretty; }
+
+/* Gradient brand text helper (for the landing hero) */
+.gx-text-gradient {
+  background: linear-gradient(100deg, #66caff 0%, var(--gx-azure-500) 45%, #2bd4c7 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ----------------------------------------------------------------------------
+   Links & active nav — brand azure
+---------------------------------------------------------------------------- */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--sl-color-text-accent);
+  text-underline-offset: 0.2em;
+  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+}
+.sl-markdown-content a:hover:not(:where(.not-content *)) {
+  text-decoration-color: currentColor;
+}
+
+/* Sidebar active item gets the azure tint + a brand left-rule */
+nav.sidebar a[aria-current='page'],
+nav.sidebar a[aria-current='page']:hover {
+  background-color: color-mix(in srgb, var(--gx-azure-500) 14%, transparent);
+  color: var(--sl-color-white);
+  font-weight: 600;
+}
+
+/* ----------------------------------------------------------------------------
+   Code blocks — subtle azure hairline + brand-tinted inline code
+---------------------------------------------------------------------------- */
+.sl-markdown-content :not(pre) > code {
+  border: 1px solid color-mix(in srgb, var(--gx-azure-500) 22%, transparent);
+  border-radius: 0.375rem;
+  padding: 0.15em 0.4em;
+}
+.expressive-code .frame {
+  border-radius: 0.75rem;
+}
+
+/* ----------------------------------------------------------------------------
+   Asides (note / tip / caution / danger) — brand the "note" with azure
+---------------------------------------------------------------------------- */
+/* Colour-coded asides — each callout type gets its own hue so the docs aren't
+   uniformly blue. */
+.starlight-aside--note {
+  --sl-color-asides-text-accent: var(--gx-azure-300);
+  --sl-color-asides-border: var(--gx-azure-500);
+  background-color: color-mix(in srgb, var(--gx-azure-500) 8%, transparent);
+}
+.starlight-aside--tip {
+  --sl-color-asides-text-accent: var(--gx-emerald-300);
+  --sl-color-asides-border: var(--gx-emerald-500);
+  background-color: color-mix(in srgb, var(--gx-emerald-500) 9%, transparent);
+}
+.starlight-aside--caution {
+  --sl-color-asides-text-accent: var(--gx-amber-300);
+  --sl-color-asides-border: var(--gx-amber-500);
+  background-color: color-mix(in srgb, var(--gx-amber-500) 10%, transparent);
+}
+.starlight-aside--danger {
+  --sl-color-asides-text-accent: var(--gx-ember-400);
+  --sl-color-asides-border: var(--gx-ember-500);
+  background-color: color-mix(in srgb, var(--gx-ember-500) 9%, transparent);
+}
+:root[data-theme='light'] .starlight-aside--tip { --sl-color-asides-text-accent: var(--gx-emerald-700); }
+:root[data-theme='light'] .starlight-aside--caution { --sl-color-asides-text-accent: var(--gx-amber-700); }
+
+/* ----------------------------------------------------------------------------
+   Man-page / CLI configuration parameters — make the directive names stand out
+   from surrounding prose (they are wrapped in <dfn class="gx-param"> by the
+   man-page / CLI generators).
+---------------------------------------------------------------------------- */
+.sl-markdown-content dfn.gx-param {
+  font-family: var(--gx-font-mono);
+  font-style: normal;
+  font-weight: 600;
+  font-size: 0.92em;
+  color: var(--gx-teal-300);
+  background: color-mix(in srgb, var(--gx-teal-500) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gx-teal-500) 30%, transparent);
+  border-radius: 0.35rem;
+  padding: 0.08em 0.45em;
+  scroll-margin-top: 6rem;
+}
+:root[data-theme='light'] .sl-markdown-content dfn.gx-param {
+  color: var(--gx-teal-700);
+  background: color-mix(in srgb, var(--gx-teal-500) 10%, transparent);
+}
+
+/* Default / Example values for a directive — amber chip, paired with the
+   teal parameter name. */
+.sl-markdown-content .gx-deflabel {
+  font-size: 0.78em;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--sl-color-gray-3);
+}
+.sl-markdown-content .gx-default {
+  font-family: var(--gx-font-mono);
+  font-size: 0.9em;
+  color: var(--gx-amber-300);
+  background: color-mix(in srgb, var(--gx-amber-500) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gx-amber-500) 30%, transparent);
+  border-radius: 0.35rem;
+  padding: 0.05em 0.45em;
+}
+:root[data-theme='light'] .sl-markdown-content .gx-default {
+  color: var(--gx-amber-700);
+  background: color-mix(in srgb, var(--gx-amber-500) 12%, transparent);
+}
+
+/* ----------------------------------------------------------------------------
+   Focus ring & selection — brand azure (matches the website)
+---------------------------------------------------------------------------- */
+:focus-visible {
+  outline: 2px solid var(--gx-azure-400);
+  outline-offset: 2px;
+}
+::selection {
+  background: color-mix(in srgb, var(--gx-azure-500) 35%, transparent);
+  color: white;
+}
+
+/* Custom scrollbar (WebKit + Firefox) — matches the website */
+* { scrollbar-color: var(--gx-ink-500) transparent; scrollbar-width: thin; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--gx-ink-500);
+  border-radius: 99px;
+  border: 2px solid var(--sl-color-bg);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--gx-ink-400); }
+
+/* ----------------------------------------------------------------------------
+   Landing / splash hero — brand grid backdrop, glow, gradient title
+---------------------------------------------------------------------------- */
+.page .hero {
+  position: relative;
+}
+.page .hero::before {
+  content: "";
+  position: absolute;
+  inset: -4rem -2rem 0;
+  z-index: -1;
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--gx-azure-400) 16%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 28px 28px;
+  -webkit-mask-image: radial-gradient(60% 60% at 50% 35%, #000 0%, transparent 75%);
+  mask-image: radial-gradient(60% 60% at 50% 35%, #000 0%, transparent 75%);
+  pointer-events: none;
+}
+.page .hero h1 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(100deg, #66caff 0%, var(--gx-azure-400) 45%, #2bd4c7 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+:root[data-theme='light'] .page .hero h1 {
+  background: linear-gradient(100deg, #0369a1 0%, var(--gx-azure-600) 45%, #0e9488 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.page .hero .tagline {
+  color: var(--sl-color-gray-2);
+  max-width: 46rem;
+}
+
+/* "press / to search" tip card on the landing page */
+.gx-tip {
+  margin-top: 2.5rem;
+  padding: 0.9rem 1.1rem;
+  border-radius: 0.8rem;
+  border: 1px solid var(--sl-color-hairline-light);
+  background: color-mix(in srgb, var(--gx-azure-500) 7%, transparent);
+  color: var(--sl-color-gray-2);
+  font-size: 0.92rem;
+}
+.gx-tip kbd {
+  font-family: var(--gx-font-mono);
+  font-size: 0.8em;
+  padding: 0.1em 0.45em;
+  border-radius: 0.35rem;
+  border: 1px solid var(--sl-color-hairline);
+  background: color-mix(in srgb, var(--sl-color-white) 6%, transparent);
+}
+
+/* ----------------------------------------------------------------------------
+   Content formatting polish (theme-only — no source changes)
+---------------------------------------------------------------------------- */
+
+/* Directive / option definitions (man pages, CLI, gromox specs) render as a
+   paragraph that starts with a styled term and a line break. Present each as a
+   tidy definition block: a hanging left rule groups the term with its body. */
+.sl-markdown-content p:has(> dfn.gx-param:first-child) {
+  margin-top: 1.15rem;
+  padding: 0.15rem 0 0.2rem 0.95rem;
+  border-left: 2px solid color-mix(in srgb, var(--gx-teal-500) 38%, transparent);
+}
+.sl-markdown-content p:has(> dfn.gx-param:first-child) > dfn.gx-param:first-child {
+  margin-bottom: 0.1rem;
+}
+
+/* Section dividers — a hairline under each H2 makes long reference pages
+   (man pages, specs) far easier to scan. */
+.sl-markdown-content h2 {
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--sl-color-hairline-light);
+}
+
+/* Tables — branded header + zebra striping + rounded, scrollable frame. */
+.sl-markdown-content table {
+  display: table;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+.sl-markdown-content thead th {
+  background: color-mix(in srgb, var(--gx-azure-500) 12%, var(--sl-color-bg-sidebar));
+  color: var(--sl-color-white);
+  font-weight: 600;
+  border-bottom: 1px solid var(--sl-color-hairline);
+}
+.sl-markdown-content tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--sl-color-gray-1) 4%, transparent);
+}
+.sl-markdown-content tbody tr:hover {
+  background: color-mix(in srgb, var(--gx-azure-500) 6%, transparent);
+}
+.sl-markdown-content :is(th, td) {
+  padding: 0.5rem 0.85rem;
+  vertical-align: top;
+  border-bottom: 1px solid var(--sl-color-hairline);
+}
+.sl-markdown-content tbody tr:last-child :is(th, td) { border-bottom: 0; }
+
+/* Keep inline code (commands like `grommunio-admin domain`) from breaking
+   mid-token — a chip wraps as one unit, never across lines internally. */
+.sl-markdown-content code:not(:where(.expressive-code *)) { white-space: nowrap; }
+
+/* Blockquotes — brand the left rule (used by the “Sourced from …” notes etc.). */
+.sl-markdown-content blockquote {
+  border-inline-start: 3px solid color-mix(in srgb, var(--gx-azure-500) 55%, transparent);
+  background: color-mix(in srgb, var(--gx-azure-500) 5%, transparent);
+  padding: 0.4rem 1rem;
+  border-radius: 0 0.5rem 0.5rem 0;
+  color: var(--sl-color-gray-2);
+}
+.sl-markdown-content blockquote > :first-child { margin-top: 0; }
+.sl-markdown-content blockquote > :last-child { margin-bottom: 0; }
+
+/* Horizontal rules — subtle hairline instead of a heavy bar. */
+.sl-markdown-content hr {
+  border: 0;
+  border-top: 1px solid var(--sl-color-hairline);
+  margin: 2rem 0;
+}
+
+/* Tighten nested lists a touch for the dense reference pages. */
+.sl-markdown-content li > ul, .sl-markdown-content li > ol { margin-top: 0.3rem; }
+
+/* ----------------------------------------------------------------------------
+   Wide-screen layout — pack content next to the sidebar
+   Starlight centers the article on pages that have both a sidebar and a TOC
+   (--sl-content-margin-inline: auto 0), which on wide screens leaves a large
+   empty gutter to the LEFT of the content. Left-align the article and size the
+   main pane to the content width so the content sits right after the sidebar
+   with the table of contents beside it, instead of floating in the middle.
+---------------------------------------------------------------------------- */
+@media (min-width: 72rem) {
+  :root[data-has-sidebar][data-has-toc] .main-pane,
+  [data-has-sidebar][data-has-toc] .main-pane {
+    --sl-content-margin-inline: 0;
+    width: min(var(--sl-content-width), 100% - 15rem);
+  }
+}
+
+/* ----------------------------------------------------------------------------
+   Content images — present screenshots at a comfortable, consistent size
+   The article column is wide; letting every screenshot stretch edge-to-edge is
+   overkill. Cap images to a figure-sized width (centered) so small images keep
+   their natural size and large ones don't dominate. A height cap tames very tall
+   (portrait) screenshots so a single image can't fill the whole viewport.
+---------------------------------------------------------------------------- */
+.sl-markdown-content img:not([class]) {
+  display: block;
+  margin-inline: auto;
+  max-width: min(100%, 60rem);
+  max-height: 88vh;
+  width: auto;
+  height: auto;
+  border-radius: 0.5rem;
+}
+
+/* Right-hand table of contents: wrap long words (German compounds, config
+   directives, command names) so they don't overflow past the column edge. */
+starlight-toc a,
+mobile-starlight-toc a,
+.right-sidebar a {
+  overflow-wrap: break-word;
+  word-break: break-word;
+  hyphens: auto;
+}

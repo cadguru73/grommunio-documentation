@@ -1,9 +1,0 @@
-.. meta::
-   :description: The main grommunio documentation for using grommunio web.
-   :keywords: grommunio documentation web
-   :author: grommunio GmbH
-   :publisher: grommunio GmbH
-   :copyright: grommunio GmbH, 2025
-   :page-topic: software
-   :page-type: documentation
-   :robots: index, follow

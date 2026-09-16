@@ -1,0 +1,864 @@
+---
+title: High availability (Pacemaker, DRBD & a floating IP)
+description: A reference architecture for a highly available grommunio deployment — Pacemaker/Corosync cluster management, DRBD block-level storage replication, a floating virtual IP, and an ordered service stack that fails over as a unit.
+sidebar:
+  label: High availability
+  order: 75
+---
+
+import Diagram from '../../../components/Diagram.astro';
+
+This guide describes a **reference architecture** for running grommunio in a
+highly available (HA) two-node active/standby cluster with a third witness node.
+Storage is replicated at the block level with **DRBD**, the cluster is managed by
+**Pacemaker/Corosync**, and clients reach the active node through a **floating
+virtual IP (VIP)**. On failover the whole stack — storage, IP and services —
+moves to the surviving node together.
+
+:::note[Reference architecture]
+The hostnames, IP addresses, network interface and domain below are **examples**.
+Replace them with your own values. DRBD, fencing and network specifics depend on
+your hardware and environment — treat your live installation as the source of
+truth and adapt the snippets accordingly.
+:::
+
+## Architecture overview
+
+- **Two data nodes** (`node1`, `node2`) replicate a block device to each other
+  with DRBD. At any time one is *primary* (active), the other *secondary*.
+- The active node promotes DRBD, mounts the replicated volume as XFS at
+  `/grodata`, **bind-mounts** the service data directories from `/grodata/*` onto
+  the standard `/var/lib/*` paths, takes the **floating VIP**, and starts all
+  grommunio/Gromox services.
+- A **witness node** (`node3`) participates only in quorum voting. It holds no
+  data and runs no grommunio services.
+- Clients resolve `grommunio.example.com` via DNS to the VIP, which always lives
+  on the active node.
+
+<Diagram name="cluster-ha" alt="Highly available grommunio cluster: clients reach a floating VIP on the active node, which promotes DRBD, mounts /grodata, bind-mounts data directories and runs the service stack; a second node holds the DRBD secondary and a third node provides quorum." />
+
+### Nodes and roles
+
+| Role | Example host | Purpose |
+| --- | --- | --- |
+| Data node 1 | `node1` | DRBD peer; eligible to run the active stack |
+| Data node 2 | `node2` | DRBD peer; eligible to run the active stack |
+| Witness / quorum | `node3` | Quorum vote only — no data, no services |
+| Floating VIP | `10.0.0.10/24` | The service address clients connect to |
+
+### Why the whole stack fails over, not just the database
+
+Replicating MariaDB alone does not make grommunio highly available. The
+database holds directory data and metadata: users, domains, homeserver
+assignments and the lookup maps Postfix uses. Everything users actually work
+with lives elsewhere:
+
+- **Mailbox stores** are SQLite databases per mailbox under
+  `/var/lib/gromox/user` and `/var/lib/gromox/domain` (`exchange.sqlite3`,
+  `midb.sqlite3` and the message content next to them), see
+  [gromox(7)](/man/gromox-7/).
+- The **Gromox delivery queue** (`/var/lib/gromox/queue`) holds mail that
+  Postfix has already handed over but that is not yet written to a store.
+- **Redis** persistence and the state of grommunio-web (including sessions),
+  grommunio-dav, grommunio-antispam and the Admin API live under `/var/lib/*`.
+- The **configuration** in `/etc/gromox`, `/etc/grommunio-common`,
+  `/etc/postfix` and `/etc/nginx` is not replicated at all and must be kept
+  identical on both data nodes by you.
+
+A database-only failover therefore yields a node that can answer directory
+lookups and accept mail into Postfix, but has no mailboxes to deliver to and
+gives users no web, IMAP or SMTP continuity. This is why the reference design
+moves **data, IP and services together** as one logical homeserver. The
+homeserver reassignment described under
+[Multi-server architecture](/admin/architecture/) is a complementary approach
+for installations with several homeservers; it likewise only works if the
+mailbox data is available on the target node.
+
+## Prerequisites
+
+- Three nodes on the **same OS and grommunio package versions** (two data nodes
+  plus one witness).
+- A dedicated **block device** on each data node for DRBD (the same size on
+  both).
+- A spare IP address for the **VIP** on the cluster network interface
+  (`eth0` in the examples — use your actual NIC name, e.g. `ens192`).
+- Reliable name resolution (`/etc/hosts` entries for all nodes), time
+  synchronization (chrony), and SSH connectivity between nodes.
+- Cluster packages installed on all nodes: `pacemaker`, `corosync`, a CRM shell
+  (`crmsh`), `drbd-utils` and `resource-agents`.
+- The **DRBD kernel module** for the running kernel. On the openSUSE-based
+  grommunio Appliance `drbd-utils` alone is not sufficient; `drbd-kmp-default`
+  and `kernel-default-extra` provide the module. Verify with `modprobe drbd`.
+- A **fencing device** reachable from all nodes (BMC/IPMI, hypervisor or cloud
+  API, or SBD with a hardware watchdog) — see [Fencing (STONITH)](#fencing-stonith).
+
+:::caution[Install grommunio, then hand control to the cluster]
+Install grommunio on **both** data nodes, but let **Pacemaker** start and stop
+the services — they must not also be started independently by systemd. Set the
+managed units to the appropriate `enabled`/`disabled` state for your operating
+model so the two layers do not fight over the services.
+:::
+
+## Cluster stack: Corosync & Pacemaker
+
+Corosync (`/etc/corosync/corosync.conf`) defines the cluster name and the three
+member nodes; Pacemaker manages the resources on top.
+
+A few cluster-wide properties matter for this design:
+
+- **Quorum** with three nodes tolerates the loss of any one node (including the
+  witness) without losing quorum.
+- The witness is kept service-free with **location constraints** that score the
+  VIP, the `/grodata` mount and the service group at `-inf` on `node3`.
+
+:::danger[Configure fencing for production]
+The example configuration sets `stonith-enabled=false` for brevity. A production
+HA cluster **must** have working **STONITH/fencing**; without it a split-brain
+can promote DRBD on both nodes and corrupt data. Configure a fencing device
+(IPMI/iLO/iDRAC, a PDU, or SBD with a watchdog) before going live.
+:::
+
+### Fencing (STONITH)
+
+Pacemaker may only start the stack on the surviving node once it *knows* that
+the other node no longer runs it. Fencing provides that knowledge: it powers
+off or resets a node that stopped responding, so that a node which is merely
+isolated (network partition, frozen kernel, hung storage) cannot keep writing
+to its DRBD volume while the peer is promoted. Without fencing there is no
+safe answer to the question "is the other node really dead?", and the possible
+outcomes are two DRBD primaries (split-brain), a VIP announced by two hosts,
+and mailbox databases that have diverged and cannot be merged.
+
+Two behaviours follow from this:
+
+- **Fencing configured and working:** on a hard failure the cluster fences the
+  failed node first, then promotes DRBD, mounts `/grodata` and starts the
+  services on the survivor. The fencing action is part of the failover time.
+- **Fencing configured but unavailable** (fence device unreachable, wrong
+  credentials, BMC or hypervisor API down): the cluster **blocks**. The failed
+  node stays `UNCLEAN`, DRBD is not promoted and the services do not start
+  anywhere. This is the correct, safe outcome: it trades availability for data
+  integrity. Recovery is a manual step from your runbook: verify out-of-band
+  that the node is really powered off, restore the fence device so the pending
+  fencing action can complete, then clean up the resources.
+
+Model one fencing primitive per data node and forbid it from running on the
+node it fences. Fencing primitives may run on the witness, they need no data.
+Which `stonith:` agent you use depends on the platform (IPMI/iLO/iDRAC or
+Redfish on bare metal, a hypervisor or cloud fencing agent for virtual
+machines, or SBD with a hardware watchdog); the agent parameters differ, the
+structure does not:
+
+```bash
+# One fencing primitive per data node; <agent> and its parameters depend on your platform
+primitive fence_node1 stonith:<agent> \
+    params pcmk_host_list=node1 <agent-specific parameters> \
+    op monitor interval=60s timeout=20s
+primitive fence_node2 stonith:<agent> \
+    params pcmk_host_list=node2 <agent-specific parameters> \
+    op monitor interval=60s timeout=20s
+
+# A node must never be responsible for fencing itself
+location fence_node1_not_on_node1 fence_node1 -inf: node1
+location fence_node2_not_on_node2 fence_node2 -inf: node2
+
+property cib-bootstrap-options: stonith-enabled=true
+```
+
+Test every fence device *from the cluster* before go-live (an agent that
+works from the shell but not from Pacemaker is a common failure) and re-test
+after firmware, credential or network changes. Treat a QEMU/libvirt or
+nested-virtualisation fencing helper as a lab tool only; it is not a
+production fencing device.
+
+### Witness node
+
+The witness (`node3`) is a regular third Corosync/Pacemaker member with one
+vote. Its only job is to make quorum decisions unambiguous: with three votes
+any single node may fail and the remaining two still have quorum, and no
+two-node tie-break (`two_node`) is needed. The witness carries no DRBD device,
+no `/grodata`, no VIP and none of the grommunio services.
+
+Keep the witness service-free with location constraints scored at `-inf` for
+**every** data and service resource: the DRBD clone, the `/grodata` mount, the
+bind-mount group, the VIP and the service group. If the DRBD clone is not
+excluded, Pacemaker may try to place one of its two instances on the witness,
+where the resource fails for lack of a backing device. The
+[example configuration](#example-configuration) contains all of these
+constraints.
+
+The witness does not need the hardware of the data nodes, but it must share
+their time source and name resolution, and it should run on independent
+infrastructure (a different host or rack) so that it does not fail together
+with a data node. Losing the witness alone is harmless; see
+[Validating the cluster](#validating-the-cluster) for what happens when a data
+node fails while the witness is down.
+
+## Storage: DRBD and `/grodata`
+
+### DRBD resource
+
+A single DRBD resource (`grodata`, device `/dev/drbd0`) replicates the backing
+disk between the two data nodes. After the initial full synchronization, DRBD is
+handed to Pacemaker, which manages it as a **promotable clone** (`clone-max=2`,
+`promoted-max=1`) so exactly one node is primary at a time.
+
+```bash
+# Inspect replication state before and after any change
+drbdadm status
+cat /proc/drbd
+```
+
+:::tip[Replication protocol]
+Protocol **C** (synchronous) gives the strongest data-safety guarantee. If you
+intend to switch to protocol **B**, do so only **after** the initial sync has
+completed, with a documented sync state, and inside a controlled maintenance
+window — checking `drbdadm status`, `cat /proc/drbd` and the Pacemaker resource
+state first.
+:::
+
+### Mount and bind-mount concept
+
+On the active node `/dev/drbd0` is XFS-mounted at `/grodata`. Each service's data
+directory is then **bind-mounted** from `/grodata` onto its standard
+`/var/lib/*` path, so the persistent data follows the DRBD volume on failover.
+
+| Source under `/grodata` | Bind-mount target | Purpose |
+| --- | --- | --- |
+| `/grodata/mysql` | `/var/lib/mysql` | MariaDB data directory |
+| `/grodata/redis` | `/var/lib/redis` | Redis persistence |
+| `/grodata/gromox` | `/var/lib/gromox` | Gromox mail store / store data |
+| `/grodata/grommunio-web` | `/var/lib/grommunio-web` | Web data, sessions, index |
+| `/grodata/grommunio-antispam` | `/var/lib/grommunio-antispam` | Antispam data |
+| `/grodata/grommunio-dav` | `/var/lib/grommunio-dav` | DAV data |
+| `/grodata/grommunio-admin-api` | `/var/lib/grommunio-admin-api` | Admin-API data |
+
+In the cluster the bind-mounts are modeled as `Filesystem` primitives with
+`fstype=none` and `options=bind`, collected in a group (`grodata_binds`) so they
+all follow the DRBD mount.
+
+### Moving existing data to `/grodata`
+
+If grommunio was installed (and possibly used) on the nodes before the cluster
+existed, copy the service data from the local `/var/lib/*` directories onto the
+replicated volume **once**, on the node that currently has `/grodata` mounted
+as DRBD primary. The second node receives the data through DRBD; its local
+`/var/lib/*` directories stay in place as empty mount points that the
+bind-mounts later cover.
+
+Do this in a maintenance window with **no writes to the source directories**:
+stop the whole grommunio stack *and* Postfix first, so that no mail is
+delivered into `/var/lib/gromox/queue` while you copy. At this stage Pacemaker
+manages DRBD and the `/grodata` mount, but not yet the bind-mounts or the
+services.
+
+```bash
+systemctl stop nginx grommunio-admin-api grommunio-antispam php-fpm redis@grommunio mariadb
+systemctl stop gromox-http gromox-midb gromox-zcore gromox-event gromox-timer gromox-imap gromox-pop3 gromox-delivery-queue gromox-delivery
+systemctl stop postfix
+
+mkdir -p /grodata/mysql /grodata/redis /grodata/gromox /grodata/grommunio-web /grodata/grommunio-antispam /grodata/grommunio-dav /grodata/grommunio-admin-api
+
+rsync -aHAX /var/lib/mysql/ /grodata/mysql/
+rsync -aHAX /var/lib/redis/ /grodata/redis/
+rsync -aHAX /var/lib/gromox/ /grodata/gromox/
+rsync -aHAX /var/lib/grommunio-web/ /grodata/grommunio-web/
+rsync -aHAX /var/lib/grommunio-antispam/ /grodata/grommunio-antispam/
+rsync -aHAX /var/lib/grommunio-dav/ /grodata/grommunio-dav/
+rsync -aHAX /var/lib/grommunio-admin-api/ /grodata/grommunio-admin-api/
+```
+
+`rsync -aHAX` preserves ownership, permissions, hard links, ACLs and extended
+attributes, so every target directory ends up with the same owner and mode as
+its source. Verify this per directory instead of applying blanket `chown -R`
+corrections afterwards:
+
+```bash
+stat -c '%U:%G %a %n' /var/lib/mysql /grodata/mysql
+stat -c '%U:%G %a %n' /var/lib/gromox /grodata/gromox
+```
+
+Expected result on a grommunio Appliance (the source and the copy must match;
+your system is the reference if it differs):
+
+| Directory under `/grodata` | Owner | Mode |
+| --- | --- | --- |
+| `mysql` | `mysql:mysql` | `700` |
+| `redis` | `redis:redis` | `750` |
+| `gromox` | `gromox:gromox` | `770` |
+| `grommunio-web` | `groweb:groweb` | `770` |
+| `grommunio-antispam` | `groas:grommunio` | `750` |
+| `grommunio-dav` | `root:grodav` | `770` |
+| `grommunio-admin-api` | `grommunio:grommunio` | `750` |
+
+:::note[Additional components]
+The seven directories cover the core mail and groupware stack. If grommunio
+Archive, Chat, Files or Office also run on the cluster nodes, their state
+under `/var/lib/grommunio-archive`, `/var/lib/grommunio-chat`,
+`/var/lib/grommunio-files` and `/var/lib/grommunio-office` (and any databases
+or object stores they use) needs the same treatment: a bind-mount from
+`/grodata` and a `systemd:` resource in the service group, or a separate HA
+design for that component.
+:::
+
+Then configure the bind-mounts and the service group in Pacemaker and let the
+cluster start the services; do not start them with `systemctl`. The original
+content of `/var/lib/*` remains on the local disk underneath the bind-mounts
+and is hidden while the cluster is active. Once the cluster has been
+validated, remove these stale copies so that a service accidentally started
+outside the cluster fails visibly instead of working on outdated data.
+
+## Pacemaker resources
+
+### Resource summary
+
+| Resource | Agent | Role |
+| --- | --- | --- |
+| `groCluster` | `ocf:heartbeat:IPaddr2` | The floating VIP |
+| `ms_grodata` | `ocf:linbit:drbd` (promotable) | DRBD primary/secondary |
+| `grodata_mount` | `ocf:heartbeat:Filesystem` | XFS mount of `/dev/drbd0` at `/grodata` |
+| `grodata_binds` | group of `Filesystem` (bind) | The seven bind-mounts |
+| `grommunio_svc` | group of `systemd:*` | The ordered grommunio/Gromox service stack |
+
+### Service start order (`grommunio_svc`)
+
+The service group starts (and stops, in reverse) in a fixed order so
+dependencies come up first:
+
+| # | Resource | Unit |
+| --- | --- | --- |
+| 1 | `mariadb` | `systemd:mariadb` |
+| 2 | `redis-grommunio` | `systemd:redis@grommunio.service` |
+| 3 | `php-fpm` | `systemd:php-fpm` |
+| 4 | `gromox-http` | `systemd:gromox-http` |
+| 5 | `gromox-midb` | `systemd:gromox-midb` |
+| 6 | `gromox-zcore` | `systemd:gromox-zcore` |
+| 7 | `gromox-event` | `systemd:gromox-event` |
+| 8 | `gromox-timer` | `systemd:gromox-timer` |
+| 9 | `gromox-imap` | `systemd:gromox-imap` |
+| 10 | `gromox-pop3` | `systemd:gromox-pop3` |
+| 11 | `gromox-delivery-queue` | `systemd:gromox-delivery-queue` |
+| 12 | `gromox-delivery` | `systemd:gromox-delivery` |
+| 13 | `grommunio-antispam` | `systemd:grommunio-antispam` |
+| 14 | `grommunio-admin-api` | `systemd:grommunio-admin-api` |
+| 15 | `nginx` | `systemd:nginx` |
+
+### Ordering and colocation
+
+The constraints enforce one logical chain — **promote DRBD → mount `/grodata` →
+provide the bind-mounts → bring up the VIP → start the services** — and keep
+everything colocated on the DRBD-primary node:
+
+| Constraint | Effect |
+| --- | --- |
+| `drbd_before_grodata` | `ms_grodata` must be promoted before `grodata_mount` starts |
+| `grodata_before_binds` | `/grodata` mounts before the bind-mounts |
+| `binds_before_grommunio_svc` | Bind-mounts start before the services |
+| `grodata_before_ip` / `ip_before_grommunio_svc` | The VIP is tied to the `/grodata` stack and starts before `grommunio_svc` |
+| `grodata_on_drbd` (colocation) | `/grodata` runs on the DRBD-promoted node |
+| `grommunio_svc_on_*` (colocation) | Services run together with the VIP, `/grodata` and the bind-mounts |
+| `no_*_on_witness` (location, `-inf`) | The DRBD clone, VIP, mount, bind-mounts and services are excluded from the witness |
+
+The full configuration is in the [example below](#example-configuration).
+
+## Logical homeserver identity
+
+Clients, Postfix and the Gromox components themselves must see **one**
+homeserver, regardless of which physical node runs the stack. The physical
+nodes (`node1`, `node2`) are only carriers; the logical homeserver is the name
+that resolves to the VIP (`grommunio.example.com` in this guide). Three things
+have to agree on that name.
+
+### `host_id` on both data nodes
+
+Gromox daemons identify the system they run on through the `host_id`
+directive. It defaults to the system hostname, which differs between the two
+nodes. [exmdb_provider(4gx)](/man/exmdb_provider-4gx/) compares `host_id` with
+`servers.hostname` (the homeserver recorded for each user and domain) to
+decide which stores it serves, and the value also appears in the HTTP `Server`
+header, in SMTP `HELO`/`EHLO` lines, in IMAP/POP3 greetings and in DSN texts.
+Set it to the logical name, with the same value on both nodes:
+
+```ini title="/etc/gromox/http.cfg"
+host_id=grommunio.example.com
+```
+
+`host_id` is a per-daemon directive, not a cluster-wide key in `gromox.cfg`.
+The value in `http.cfg` is the one exmdb_provider evaluates, because it runs
+inside `gromox-http`. The same directive also exists in `delivery.cfg`,
+`smtp.cfg` (read by `gromox-delivery-queue`), `imap.cfg`, `pop3.cfg` and
+`zcore.cfg` (see [http(8gx)](/man/http-8gx/), [delivery(8gx)](/man/delivery-8gx/),
+[delivery-queue(8gx)](/man/delivery-queue-8gx/), [imap(8gx)](/man/imap-8gx/),
+[pop3(8gx)](/man/pop3-8gx/) and [zcore(8gx)](/man/zcore-8gx/)); those daemons
+use it for protocol greetings, `HELO` lines, DSN texts and, in the case of
+imap, for the names of its midb cache files. Wherever you set it, use the
+identical value on both nodes. A mismatch between `host_id` and the homeserver
+recorded in the database shows up as EXMDB connection or access errors after a
+failover.
+
+### exmdb reachable under the logical address
+
+By default exmdb_provider listens on `::1` only. With a logical hostname that
+resolves to the VIP, the exmdb clients (zcore, imap and the command-line
+utilities) connect to the VIP address, so the service must listen on all
+addresses and accept connections from the VIP and from both node addresses.
+Gromox uses IPv6 sockets exclusively; write IPv4 addresses in the RFC 4291
+mapped form, as required by [gromox(7)](/man/gromox-7/) "Host addresses":
+
+```ini title="/etc/gromox/exmdb_provider.cfg"
+listen_ip=::
+exmdb_hosts_allow=::1 ::ffff:10.0.0.10 ::ffff:10.0.0.11 ::ffff:10.0.0.12
+```
+
+`exmdb_hosts_allow` takes individual addresses only, no networks and no CIDR
+notation. Because `listen_ip=::` exposes the exmdb port (`exmdb_listen_port`,
+default 5000) beyond loopback, restrict that port to the cluster network in
+the host firewall.
+
+### One server entry, one name
+
+If the installation has an entry in the grommunio *Servers* table (required
+for multi-server setups and a common preparation for them), the server's
+hostname must be the **logical** name, never a node name, and users and
+domains must be assigned to it. Check what is registered first; create the
+entry only if it is missing, or correct an existing one with
+`grommunio-admin server modify`:
+
+```bash
+grommunio-admin server list
+grommunio-admin server create -H grommunio.example.com -e grommunio.example.com
+grommunio-admin server show grommunio.example.com
+grommunio-admin domain show example.com
+grommunio-admin user show alice@example.com
+```
+
+See [grommunio-admin server](/cli/grommunio-admin/server/) for the fields.
+Verify the identity from the active node: `getent hosts grommunio.example.com`
+must return the VIP, `crm status` must show the stack on the current node, and
+`findmnt /grodata /var/lib/mysql /var/lib/gromox` must show the replicated
+volume and its bind-mounts.
+
+## Postfix (MTA)
+
+In this reference, **Postfix runs under systemd and is *not* a cluster
+resource** — it is configured separately on each node. Postfix integrates with
+grommunio via MySQL lookup maps and a milter:
+
+| Parameter | Example value / path |
+| --- | --- |
+| `myhostname` | `grommunio.example.com` |
+| `virtual_mailbox_domains` | `mysql:/etc/postfix/grommunio-virtual-mailbox-domains.cf` |
+| `virtual_mailbox_maps` | `mysql:/etc/postfix/grommunio-virtual-mailbox-maps.cf` |
+| `virtual_alias_maps` | `mysql:/etc/postfix/grommunio-virtual-mailbox-alias-maps.cf` |
+| `recipient_bcc_maps` | `mysql:/etc/postfix/grommunio-bcc-forwards.cf` |
+| `virtual_transport` | `smtp:[::1]:24` |
+| `smtpd_milters` | `inet:localhost:11332` (when grommunio-antispam is active) |
+
+You can run Postfix in any of three supported ways; choose per your operating
+model:
+
+- **systemd-only on each node** (as above). A standby node can still send local
+  system mail even though it holds no active Postfix role.
+- **As a Pacemaker resource** added to the HA group, so it fails over with the
+  rest of the stack.
+- **As a clone**, running on both nodes simultaneously.
+
+After any change, reconcile the documentation with `postconf -n` from the live
+host.
+
+## Failover behaviour
+
+What users and mail senders experience during a failover follows from the
+design: everything moves as one unit and the address stays the same, but for
+the duration of the switch nothing answers on the VIP and every open TCP
+connection is cut.
+
+### Mail flow (Postfix and the Gromox delivery queue)
+
+Inbound mail passes through two queues. Postfix accepts a message from the
+network and hands it to `gromox-delivery-queue` on port 24
+(`virtual_transport = smtp:[::1]:24`), which spools it under
+`/var/lib/gromox/queue` until `gromox-delivery` writes it into the mailbox
+store. During a hard failure of the active node:
+
+- Messages **already handed to the Gromox queue** are on the replicated volume
+  (`/grodata/gromox/queue`) and are processed by `gromox-delivery` on the new
+  active node once the service group is up. Nothing has to be re-injected.
+- Messages **still in the Postfix queue of the failed node** are not
+  replicated in the systemd-only Postfix model, because `/var/spool/postfix` is
+  local. They are delivered when that node is back and the stack runs on it
+  again, or after you move them manually. If this is not acceptable, run
+  Postfix as a cluster resource with its spool on the replicated volume (see
+  [Postfix (MTA)](#postfix-mta)).
+- Messages **in flight** (SMTP session interrupted before the final `250`)
+  are not lost from the sender's point of view: the sending MTA or client
+  received no acknowledgement and retries.
+
+Because Postfix runs under systemd on each node, it usually listens on the new
+active node *before* `gromox-delivery-queue` does. During that window Postfix
+accepts mail but cannot deliver it to port 24, so the messages sit in the
+Postfix queue as deferred and are retried and delivered once the delivery
+queue is ready. This is delayed delivery, not loss, but it means that an open
+SMTP port is not the same as delivery readiness. Monitor the Postfix queue
+(`mailq`), port 24 and the `gromox-delivery-queue` unit separately. After a
+failover `mailq` must drain to empty on its own; if entries stay deferred, see
+[Mail requeueing](/admin/operations/) for the Gromox side of the queue.
+
+### Clients
+
+| Client | Behaviour on failover | What to tell users |
+| --- | --- | --- |
+| grommunio Web | The HTTPS connection drops; a page reload returns to the login page. Transparent continuation of an existing session is not guaranteed. | Log in again. |
+| IMAPS (Outlook, Thunderbird, mobile mail apps) | The connection is cut; clients reconnect to the same name and address automatically and resynchronise their folders. | Nothing, unless the client shows a transient connection error. |
+| SMTP submission (port 587) | A message being sent while the VIP is unavailable fails with a temporary error; mail clients retry or ask the user to retry. | Send again if the client reports an error. |
+| Admin UI and API, DAV, ActiveSync | Same address; new connections succeed once the service group is up. | Retry the operation. |
+
+### Load balancers in front of the VIP
+
+A load balancer (HAProxy, nginx, a hardware appliance) is an optional layer in
+front of the cluster, not a substitute for it:
+
+- It **adds** TLS offloading or edge termination, layer-7 routing (for example
+  separate hostnames for web and ActiveSync) and health-checked distribution
+  across several **independent homeservers** in a multi-server installation;
+  see [Proxy capabilities](/admin/architecture/).
+- It **does not** replicate data, provide quorum or fencing, or shorten the
+  Pacemaker failover chain. For an active/standby pair there is exactly one
+  active endpoint at any time; the balancer can only forward to the VIP (or to
+  whichever node currently answers a health check), so the switch-over time is
+  still dictated by the cluster.
+- Its health checks must test the **whole chain**, not just an open TCP port.
+  An HTTPS request to `/web/` and an IMAPS connect to the VIP are meaningful;
+  a bare TCP check on port 25 is not, because Postfix can be up while the
+  Gromox delivery queue is not (see above).
+- The balancer itself must be redundant (VRRP or equivalent), otherwise it
+  becomes the new single point of failure.
+
+Make sure the balancer and the cluster share a layer-2 segment or have a
+tested route to the VIP, and test the failover **end-to-end through the
+balancer**, not only against the VIP.
+
+## Operations runbook
+
+### Status and health checks
+
+```bash
+# Cluster
+crm_mon -1
+crm status
+crm configure show
+
+# Floating IP
+ip a | grep 10.0.0.10
+crm resource status groCluster
+
+# DRBD and the mount
+drbdadm status
+cat /proc/drbd
+mount | grep /grodata
+df -h /grodata
+
+# Services and logs
+systemctl --failed
+journalctl -u corosync -u pacemaker
+journalctl -fu gromox-http
+journalctl -fu grommunio-admin-api
+```
+
+### Clean up and restart resources
+
+```bash
+# Clear failure state (all resources, or a single one)
+crm resource cleanup
+crm resource cleanup <RESOURCE>
+
+# Restart an individual service
+crm resource restart gromox-http
+crm resource restart grommunio-admin-api
+crm resource restart nginx
+```
+
+### Node standby / online
+
+```bash
+crm node standby node1     # take a node out of resource placement
+crm node online  node1     # make it eligible again
+crm node online  node2     # keep the secondary ready for failover
+```
+
+### Planned failover
+
+1. Check cluster health: `crm_mon -1` — quorum present, no failed resources.
+2. Ensure the target node is online and not in standby (`crm node online node2`).
+3. Verify the DRBD sync state: `drbdadm status` and `cat /proc/drbd`.
+4. Put the active node into standby, or move the resources to the target node in
+   a controlled way.
+5. Confirm on the target node: DRBD promoted, `/grodata` mounted, bind-mounts
+   active, VIP up, services started.
+6. Validate application-side: web login, Admin API, IMAP/SMTP, mail queue.
+
+```bash
+# Move the whole stack: the mount, the bind-mounts, the VIP and the DRBD
+# promotion follow the service group through the colocation constraints
+crm resource move grommunio_svc node2
+crm status
+drbdadm status
+findmnt /grodata
+ip a | grep 10.0.0.10
+
+# 'move' pins the resource with a location constraint; remove it afterwards
+crm resource clear grommunio_svc
+```
+
+### Postfix operations
+
+```bash
+postconf -n
+systemctl status postfix
+journalctl -fu postfix
+mailq
+postqueue -f
+postsuper -d ALL        # flush the queue — only with operational sign-off
+```
+
+## Validating the cluster
+
+Run these scenarios before go-live and after every change to the cluster
+configuration, DRBD, fencing or the network. Use the same pattern each time:
+record the starting state, inject exactly one failure, compare the observed
+behaviour with the expected one, then test the applications through the VIP
+and check data integrity. Use a dedicated test mailbox; never test on
+production users.
+
+### Baseline checks
+
+Before and after every scenario, from a machine outside the cluster:
+
+```bash
+curl -kI https://grommunio.example.com/web/
+openssl s_client -connect grommunio.example.com:993 -quiet
+openssl s_client -connect grommunio.example.com:587 -starttls smtp -quiet
+```
+
+Expected result: an HTTP response for the web login page, and the IMAP and
+SMTP service greetings, all via the VIP. On the active node:
+
+```bash
+crm status
+drbdadm status
+findmnt /grodata /var/lib/mysql /var/lib/redis /var/lib/gromox /var/lib/grommunio-web /var/lib/grommunio-antispam /var/lib/grommunio-dav /var/lib/grommunio-admin-api
+ip a | grep 10.0.0.10
+mailq
+```
+
+A correct baseline shows quorum present, all resources started on one data
+node, DRBD `Primary`/`Secondary` with both sides `UpToDate`, all eight mounts
+present, the VIP on the active node and an empty mail queue. Send a test
+message to the test mailbox and confirm that it arrives before you inject a
+failure.
+
+### Scenarios and expected results
+
+| Scenario | How to trigger | Expected result |
+| --- | --- | --- |
+| **Planned move** | `crm resource move grommunio_svc node2`, afterwards `crm resource clear grommunio_svc` | Services stop in reverse order on `node1`; DRBD is promoted on `node2`; `/grodata`, the bind-mounts and the VIP move; services start. Web login, IMAPS and SMTP work via the VIP and the queue drains. `crm status` shows no failed actions. |
+| **Hard failure of the active node** | Power the active node off out-of-band (hypervisor or BMC). Do not use `poweroff`, which is a clean stop and does not test recovery. | The node is fenced, then the survivor promotes DRBD and starts the stack. `crm status` shows the node `OFFLINE` and all resources on the survivor; `drbdadm status` shows the survivor as `Primary` with the peer disconnected. `mailq` may show deferred entries briefly. |
+| **Network partition** | Cut the cluster link of the active node (switch port, VM NIC, or a firewall rule on the Corosync traffic). | The partition with quorum (survivor plus witness) fences the isolated node and takes over. The isolated node loses quorum and stops its resources or is powered off. At no time do both nodes show DRBD `Primary`, and the DRBD log shows no split-brain message. |
+| **Fencing unavailable** | Make the fence device unreachable (block its address or stop the BMC/hypervisor API), then hard-fail the active node. | The cluster **does not** promote on the survivor. The failed node stays `UNCLEAN` with fencing pending, DRBD stays `Secondary` and services are stopped everywhere. Service is unavailable but no data is at risk. Restore fencing so the failover can complete, then `crm resource cleanup`. |
+| **Old primary returns** | Power the failed node back on after any of the scenarios above. | The node rejoins; DRBD on it comes up `Secondary` and resynchronises **from** the current primary until both sides are `UpToDate`. Resources stay where they are: the returning node takes nothing back and does not overwrite the active side. |
+| **Witness loss** | Power off `node3`. | Quorum remains (2 of 3 votes); nothing moves and the stack keeps running. `corosync-quorumtool -s` on a data node reports quorate. |
+| **Witness loss followed by active-node loss** | With `node3` still off, hard-fail the active data node. | The remaining node has 1 of 3 votes, no quorum, and **must not** promote. The service is down until the witness or the failed node returns; a second simultaneous failure exceeds what a three-node cluster tolerates. `corosync-quorumtool -s` reports not quorate and `crm status` shows the resources stopped. Recover by bringing a second node back, then follow the runbook. |
+
+If the survivor promotes DRBD while fencing is unavailable, fencing is not
+effective (`stonith-enabled=false`, or the fence resource is not actually
+used). Fix this before going live. `crm resource move` works by adding a
+location constraint that prefers the target node and `crm resource clear`
+removes it; do not forget the `clear`, or the constraint influences every
+later placement decision.
+
+### Troubleshooting
+
+| Symptom | Likely cause | What to check / fix |
+| --- | --- | --- |
+| DRBD resource fails to start; `modprobe drbd` fails | DRBD kernel module not installed for the running kernel | Install the module package for your kernel (on the appliance `drbd-kmp-default` and `kernel-default-extra`), then `crm resource cleanup`. |
+| EXMDB connection or access errors after a failover; mailboxes "not found" | `host_id` differs from `servers.hostname`, or exmdb listens on `::1` only, or a node address is missing from `exmdb_hosts_allow` | Align `host_id`, `listen_ip` and `exmdb_hosts_allow` on both nodes as described under [Logical homeserver identity](#logical-homeserver-identity); restart `gromox-http` through `crm resource restart`. |
+| After a node crash nothing fails over; the node shows `UNCLEAN` | Fencing unavailable or misconfigured | Check the fence device and its credentials; verify out-of-band that the node is off; restore fencing; then `crm resource cleanup`. |
+| Postfix accepts mail but nothing arrives; `mailq` shows deferrals to `[::1]:24` | `gromox-delivery-queue` not (yet) running on this node | Check `crm status`; the queue drains on retry once port 24 is up, or run `postqueue -f`. If Postfix on a standby node holds mail, the stack is not running there. |
+| Resources will not leave a node, or return unexpectedly after a move | Leftover constraint from `crm resource move` | `crm resource clear` on the moved resource; inspect `crm configure show` for `cli-` constraints. |
+| A DRBD clone instance fails on the witness | Missing location constraint for the DRBD clone | Add a `-inf` location constraint for `ms_grodata` on `node3` (see the example configuration). |
+
+### Observed failover times
+
+The switch-over is a chain: fencing (for a hard failure), DRBD promotion, the
+mount, seven bind-mounts, the VIP and fifteen `systemd` units started in
+order. Its duration depends on your hardware, on the DRBD state (a promotion
+waits for a consistent volume), on the `start` timeouts of the service
+primitives and on the monitor `interval` and `timeout` values that determine
+how fast a failure is noticed. There is no vendor figure; measure it in
+**your** cluster and repeat the hard-failure test several times before you
+quote a recovery time objective.
+
+For orientation only, the values below were observed in a partner's
+three-node lab built along the design on this page (source credits are
+listed in the [legal notice](/legal/)). They are lab measurements, not sizing
+data and not a guarantee:
+
+| Scenario | Observed in a three-node lab |
+| --- | --- |
+| Planned move, until mail delivery works again | 5 samples: 6.2 s to 7.4 s, median 7.1 s |
+| Hard failure of the active node, until services answer again | 1 sample: about 26 s |
+| Hard failure of the active node, until mail delivery works again | 1 sample: about 33 s (deferred queue retry) |
+| SMTP-accepted messages lost during a hard failover | 0 of 10 verified messages (an observation, not a zero-RPO guarantee) |
+| grommunio Web, until a new login succeeds | not measured reliably |
+
+## Backup and restore
+
+:::danger[DRBD is replication, not backup]
+DRBD faithfully replicates every change — including accidental deletions and
+corruption. You **need an independent backup strategy** in addition to the
+cluster.
+:::
+
+**Configuration to back up:** `/etc/corosync/*`; the Pacemaker CIB
+(`crm configure show > cib.txt`, optionally `cibadmin --query > cib.xml`);
+`/etc/drbd.d/*`; `/etc/fstab` and the `/grodata` mount layout; `/etc/gromox/*`;
+`/etc/grommunio-common/*` (including TLS material); `/etc/grommunio-admin-api/*`;
+`/etc/nginx/*`; PHP/php-fpm configuration; `/etc/postfix/*`; and host/network
+files (`/etc/hosts`, `/etc/hostname`, NetworkManager connections, `sshd_config`).
+
+**Data to back up:** consistent MariaDB dumps and/or physical backups of
+`/grodata/mysql`; a file-level backup of `/grodata/gromox`; the remaining
+`/grodata/*` subdirectories (web, redis, dav, admin-api, antispam); TLS
+certificates and private keys (with separate access control); and the secrets
+from your password/secret manager.
+
+The procedures for building a checksummed backup set, rehearsing a full
+restore and restoring a single mailbox are in the
+[Backup and restore guide](/guides/backup-restore/); the cluster adds the
+configuration items listed above.
+
+**Restore principle:** provision a node with an identical OS/package base,
+restore (or re-initialize) the DRBD configuration and backing disk, replay the
+configuration from backup, restore the data under `/grodata` and verify the
+bind-mounts, start MariaDB consistently and check the grommunio/Postfix maps,
+then bring the cluster resources up in a controlled order and run acceptance
+tests.
+
+## Security & hardening
+
+- Configure **STONITH/fencing** (see the caution above) before production use.
+- Keep **TLS private keys** (`/etc/grommunio-common/ssl/server.key`) and the
+  certificate bundle with restrictive file permissions.
+- Hold **secrets** (database credentials, etc.) in a secret manager — never in
+  the documentation or a repository.
+- Harden SSH and restrict cluster/replication traffic to a trusted network.
+- Restrict the exmdb port (`exmdb_listen_port`, default 5000) and the DRBD
+  replication port to the cluster network. With `listen_ip=::` (see
+  [Logical homeserver identity](#logical-homeserver-identity)) exmdb is no
+  longer loopback-only.
+
+## Example configuration
+
+A genericized `crm configure show` for the architecture above. Adapt node names,
+the VIP, the NIC and your DRBD/fencing specifics; this is an example to work
+from, not a drop-in.
+
+```bash
+node 1: node1 attributes standby=off
+node 2: node2 attributes standby=off
+node 3: node3 attributes standby=off
+
+primitive groCluster IPaddr2 \
+    params ip=10.0.0.10 cidr_netmask=24 nic=eth0 \
+    op monitor interval=15s
+
+primitive grodata ocf:linbit:drbd \
+    params drbd_resource=grodata \
+    op monitor interval=15s role=Promoted \
+    op monitor interval=30s role=Unpromoted
+
+primitive grodata_mount Filesystem \
+    params device="/dev/drbd0" directory="/grodata" fstype=xfs \
+    op monitor interval=20s
+
+# One bind-mount primitive per service data directory (fstype=none, options=bind)
+primitive grodata_mount_bind_mysql Filesystem \
+    params device="/grodata/mysql" directory="/var/lib/mysql" fstype=none options=bind \
+    op monitor interval=20s timeout=40s
+primitive grodata_mount_bind_redis Filesystem \
+    params device="/grodata/redis" directory="/var/lib/redis" fstype=none options=bind \
+    op monitor interval=20s timeout=40s
+primitive grodata_mount_bind_gromox Filesystem \
+    params device="/grodata/gromox" directory="/var/lib/gromox" fstype=none options=bind \
+    op monitor interval=20s timeout=40s
+primitive grodata_mount_bind_grommunio_web Filesystem \
+    params device="/grodata/grommunio-web" directory="/var/lib/grommunio-web" fstype=none options=bind \
+    op monitor interval=20s timeout=40s
+primitive grodata_mount_bind_grommunio_antispam Filesystem \
+    params device="/grodata/grommunio-antispam" directory="/var/lib/grommunio-antispam" fstype=none options=bind \
+    op monitor interval=20s timeout=40s
+primitive grodata_mount_bind_grommunio_dav Filesystem \
+    params device="/grodata/grommunio-dav" directory="/var/lib/grommunio-dav" fstype=none options=bind \
+    op monitor interval=20s timeout=40s
+primitive grodata_mount_bind_grommunio_admin_api Filesystem \
+    params device="/grodata/grommunio-admin-api" directory="/var/lib/grommunio-admin-api" fstype=none options=bind \
+    op monitor interval=20s timeout=40s
+
+# Service primitives (one per unit; same op timeouts) — see the start-order table
+primitive mariadb systemd:mariadb \
+    op monitor interval=30s timeout=30s \
+    op start interval=0s timeout=60s \
+    op stop interval=0s timeout=60s
+# … redis-grommunio, php-fpm, gromox-http, gromox-midb, gromox-zcore, gromox-event,
+#    gromox-timer, gromox-imap, gromox-pop3, gromox-delivery-queue, gromox-delivery,
+#    grommunio-antispam, grommunio-admin-api, nginx (identical pattern)
+
+group grodata_binds \
+    grodata_mount_bind_mysql grodata_mount_bind_redis grodata_mount_bind_gromox \
+    grodata_mount_bind_grommunio_web grodata_mount_bind_grommunio_antispam \
+    grodata_mount_bind_grommunio_dav grodata_mount_bind_grommunio_admin_api
+
+group grommunio_svc \
+    mariadb redis-grommunio php-fpm gromox-http gromox-midb gromox-zcore \
+    gromox-event gromox-timer gromox-imap gromox-pop3 gromox-delivery-queue \
+    gromox-delivery grommunio-antispam grommunio-admin-api nginx
+
+clone ms_grodata grodata \
+    meta promoted-max=1 promoted-node-max=1 clone-max=2 clone-node-max=1 \
+         notify=true promotable=true interleave=true
+
+# Ordering: promote DRBD → mount → binds → VIP → services
+order drbd_before_grodata          Mandatory: ms_grodata:promote grodata_mount:start
+order grodata_before_binds         Mandatory: grodata_mount:start grodata_binds:start
+order grodata_before_ip            Mandatory: grodata_mount groCluster
+order binds_before_grommunio_svc   Mandatory: grodata_binds:start grommunio_svc:start
+order ip_before_grommunio_svc      Mandatory: groCluster:start grommunio_svc:start
+
+# Colocation: keep the whole stack on the DRBD-primary node
+colocation grodata_on_drbd         inf: grodata_mount ms_grodata:Promoted
+colocation grodata_binds_on_grodata inf: grodata_binds grodata_mount
+colocation clusterip_on_grodata    inf: groCluster grodata_mount
+colocation grommunio_svc_on_grodata inf: grommunio_svc grodata_mount
+colocation grommunio_svc_on_binds  inf: grommunio_svc grodata_binds
+colocation grommunio_svc_on_ip     inf: grommunio_svc groCluster
+
+# Keep data and services off the witness node
+location no_drbd_on_witness       ms_grodata    -inf: node3
+location no_grodata_on_witness    groCluster    -inf: node3
+location no_mount_on_witness      grodata_mount -inf: node3
+location no_binds_on_witness      grodata_binds -inf: node3
+location no_grommunio_on_witness  grommunio_svc -inf: node3
+
+property cib-bootstrap-options: \
+    have-watchdog=false \
+    cluster-infrastructure=corosync \
+    cluster-name=grommuniocluster \
+    stonith-enabled=false
+rsc_defaults build-resource-defaults: \
+    resource-stickiness=1
+```
+
+:::caution
+`stonith-enabled=false` is shown only to keep the example short. **Enable
+fencing before production use.**
+:::

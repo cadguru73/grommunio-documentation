@@ -1,0 +1,1041 @@
+---
+title: "Architektur"
+description: "Während grommunio als appliances vertrieben wird, ist grommunio auch als Softwarepaket erhältlich. Die Paketierung orientiert sich an der modularen Komponentenstruktur…"
+sidebar:
+  order: 70
+---
+
+import ArchitectureDiagram from '../../../../components/ArchitectureDiagram.astro';
+import Diagram from '../../../../components/Diagram.astro';
+
+## Komponentenarchitektur
+
+Während grommunio als appliance ausgeliefert wird, ist grommunio auch als Softwarepaket erhältlich. Die Paketierung orientiert sich an der modularen Komponentenstruktur der in grommunio verfügbaren Softwaremodule. Der modulare Komponentenaufbau von grommunio ermöglicht eine komponentenbasierte Bereitstellung für alle Arten von Implementierungen und Betriebsszenarien – von Einzelimplementierungen mit hochdichter Komponentenanordnung bis hin zu skalierbaren, verteilten Komponentenanordnungen.
+
+<ArchitectureDiagram />
+
+Das Layout der grommunio-Komponente unterstützt eine Vielzahl von Einsatzarten:
+
+- Containers (Docker, LXC)
+- Virtuelle Maschinen (KVM, VMware, Hyper-V)
+
+Die von grommunio ausgelieferten Appliances enthalten alle für den Betrieb erforderlichen Komponenten in Form von Paketen, die über Repositorys aktualisiert werden können. Die appliances liefern diese Pakete als Teil der Appliance-Distribution aus, um den Betrieb der Installation ohne die Aktivierung externer Repositories zu ermöglichen (wobei eine Bereitstellung mit aktiver Internetverbindung für Updates während der Bereitstellung dringend empfohlen wird).
+
+Um die Komponentenarchitektur und die Vernetzung dieser Komponenten zu verstehen, werden in den folgenden Kapiteln die einzelnen Komponenten vorgestellt und erläutert, wie sie mit anderen Komponenten im gesamten Komponentenstapel zusammenwirken.
+
+## Multi-Server-Architektur
+
+Die Skalierung von grommunio über mehrere Instanzen hinweg („Multi-Server“) erfordert ein grundlegendes Verständnis von Scale-out-Lösungen. Für die meisten Benutzer ist der Single-Point-of-Entry-Ansatz (SPOE) vorzuziehen, da sie sich so nicht merken müssen, auf welchem Server sich ihr Profil befindet. In groß angelegten Umgebungen mit Zehntausenden von Benutzern erfordern jedoch selbst die fortschrittlichsten Serversysteme eine Verteilung auf mehrere Knoten, um die Last effizient zu bewältigen.
+
+**Die Rolle von Autodiscover, Autoconfig und Load Balancern**
+
+Autodiscover bietet in Kombination mit Load Balancern einen einheitlichen Zugangspunkt und stellt sicher, dass sich Benutzer nahtlos mit ihren Postfächern verbinden können, ohne sich Gedanken über die Verteilung im Backend machen zu müssen. Damit dies funktioniert, muss das System wissen, wo die Daten der einzelnen Benutzer gespeichert sind – unabhängig davon, ob sie einen IMAP-Client oder die Weboberfläche nutzen.
+
+Wenn eine Anfrage bei einem Load Balancer eingeht, kann sie an Knoten A weitergeleitet werden, obwohl sich die Daten des Benutzers auf Knoten B befinden. Je nach verwendetem Protokoll wird die Komponente, die die Anfrage bearbeitet, entweder:
+
+Leiten Sie die Anfrage an den entsprechenden Backend-Knoten weiter oder greifen Sie über RPC-Aufrufe (exmdb-Datenverkehr) direkt auf die Daten zu.
+
+### Einrichtung eines Multi-Server-Systems
+
+Um einen reibungslosen Betrieb über mehrere Knoten hinweg zu gewährleisten, müssen die folgenden Konfigurationen vorhanden sein:
+
+- Definition von Servern in grommunio Admin:
+  - Der interne Hostname sollte den tatsächlichen Hostnamen des Servers widerspiegeln.
+  - Der externe Hostname sollte mit dem Namen übereinstimmen, der in Client-Anfragen übermittelt wird (z. B. für AutoDiscover).
+- Benutzerzuordnung:
+  - Benutzer müssen bestimmten Servern zugeordnet werden. Sind mehrere Server konfiguriert, bestimmt die Auswahlrichtlinie des Systems die automatische Zuordnung.
+- Konfiguration der Netzwerkdienste:
+  - Die Kerndienste müssen entsprechend der Architektur so konfiguriert werden, dass sie auf Netzwerkanfragen warten.
+
+:::caution
+Für funktionsfähige Weiterleitungen müssen interne Hostnamen auch in einer Proxy-Umgebung erreichbar bleiben. Lastverteiler müssen sowohl auf interne als auch auf externe Hostnamen reagieren. Zudem muss der Datenverkehr zwischen den Komponenten über interne Hostnamen korrekt aufgelöst werden. Eine ordnungsgemäße Konfiguration des TLS-Zertifikats ist für den sicheren Datenaustausch zwischen den Komponenten von entscheidender Bedeutung. Es wird ein Multi-SAN- oder Wildcard-Zertifikat empfohlen.
+:::
+
+:::caution
+Je nach Ihrer Umgebung sind möglicherweise zusätzliche Anpassungen erforderlich. Parameter wie „notify_stub_threads_num“ oder „rpc_proxy_connection_num“ sollten entsprechend Ihrer spezifischen Skalierung und Arbeitslast angepasst werden. Weitere Informationen zu diesen Einstellungen finden Sie in den Manpages.
+:::
+
+### Gemeinsamer Speicher
+
+Um gromox für den Betrieb mit mehreren Servern zu konfigurieren, führen Sie die folgenden Schritte für eine Konfiguration mit drei Knoten (mit aktiviertem IPv4-Datenverkehr) durch:
+
+**Konfigurationsdateien**
+
+``` text
+# /etc/gromox/exmdb_provider.cfg
+# exmdb_hosts_allow replaces the former exmdb_acl.txt (Gromox 2.8+).
+# There is no exmdb host map any more — routing comes from the database (below).
+exmdb_hosts_allow=:: ::ffff:10.10.10.20 ::ffff:10.10.10.30 ::ffff:10.10.10.40 ::1
+listen_ip=::
+
+# /etc/gromox/midb.cfg
+midb_hosts_allow=:: ::ffff:10.10.10.20 ::ffff:10.10.10.30 ::ffff:10.10.10.40 ::1
+midb_listen_ip=::
+
+# /etc/gromox/midb_list.txt
+/var/lib/gromox/user/mail1.example.net ::ffff:10.10.10.20 5555
+/var/lib/gromox/user/mail2.example.net ::ffff:10.10.10.30 5555
+/var/lib/gromox/user/mail3.example.net ::ffff:10.10.10.40 5555
+/var/lib/gromox/domain/ ::ffff:10.10.10.20 5555
+
+# /etc/gromox/event.cfg
+event_hosts_allow=:: ::ffff:10.10.10.20 ::ffff:10.10.10.30 ::ffff:10.10.10.40 ::1
+event_listen_ip=::
+
+# /etc/gromox/timer.cfg
+timer_hosts_allow=:: ::ffff:10.10.10.20 ::ffff:10.10.10.30 ::ffff:10.10.10.40 ::1
+timer_listen_ip=::
+```
+
+:::note[Das exmdb-Routing stammt aus der Datenbank]
+Die frühere `/etc/gromox/exmdb_list.txt`-Hostzuordnung ist **veraltet** (seit der
+Entwicklungsphase, die auf die Veröffentlichung von Gromox 3.4 folgte). Das exmdb-Routing wird nun
+aus den grommunio-admin-**Server**-Definitionen abgeleitet – dem `users.homedir`
+abstrakten Pfad und der Spalte „Hostname“ des Servers –, sodass keine statische exmdb-
+Hostzuordnung mehr gepflegt werden muss. Ebenso wurde die Zugriffskontrolle aus den alten `*_acl.txt`
+Dateien in die oben gezeigten `*_hosts_allow`-Direktiven verlagert.
+
+`midb_list.txt` ist nach wie vor die **midb**-Multiserver-Zuordnung (Verzeichnispräfix → midb
+Host:Port); fehlt diese Angabe, geht midb von einem einzelnen lokalen Server aus (`/ ::1 5555`).
+Die `*_listen_ip`-Anweisungen funktionieren weiterhin, doch neuere Versionen von Gromox bevorzugen die
+konsolidierte `gromox.cfg`-Form (z. B. `midb_listen`).
+:::
+
+:::caution
+Bitte stellen Sie sicher, dass Ihre Firewall-Konfiguration die folgenden zusätzlichen Ports freigibt: exmdb (TCP/5000), midb (5555/TCP), Timer (6666/TCP) und Event (33333/TCP).
+:::
+
+**Steuerung „Central Admin API“**
+
+Da der Einsatz mehrerer Server auch für den Erstellungsprozess des Postfachspeichers eine gewisse Logik erfordert, wäre bei Verwendung der Topologie von Share-nothing-Clustern dennoch erforderlich, dass der `gromox-mbop`-Postfacherstellungsprozess auf den Speicher der Knoten zugreifen kann.
+
+Im Allgemeinen wird in Umgebungen mit mehreren Servern empfohlen, die im obigen Abschnitt beschriebene Technik der Voranstellung des Hostnamens zu verwenden. Auf diese Weise wird das Postfach entsprechend seinem Verzeichnis an das von ihm definierte Postfachverzeichnis „gebunden“. Dies bedeutet lediglich, dass dieses Postfach (in erster Linie) dem Hostnamen zugeordnet ist; der tatsächliche Hostname für die „Verarbeitung“ wird jedoch durch die Beziehung „Benutzer\<\>Postfach“ definiert.
+
+Um die Postfächer mit einem Pfadnamen einschließlich des Hostnamens anzulegen, ist diese Einstellung für grommunio-admin und API erforderlich, damit die Postfächer korrekt erstellt werden:
+
+``` text
+options:
+  serverExplicitMount: true
+```
+
+Im Idealfall würde dieser Konfigurationsblock in den Konfigurationsbaum von grommunio Admin und API aufgenommen werden, beispielsweise als neue YAML-Datei unter `/etc/grommunio-admin-api/conf.d/multiserver.yaml`.
+
+:::caution
+Nur weil Ihre Knoten gemeinsamen Zugriff auf alle konfigurierten Knoten haben, bedeutet das nicht, dass die Anwendungen, die die Postfächer bereitstellen, fest an den Hostnamen gebunden sind. Die tatsächliche Verarbeitung wird durch die Beziehung zwischen Benutzer und Server bestimmt.
+:::
+
+**Speicherstruktur**
+
+Bei dieser Konfiguration werden die Benutzerverzeichnisse auf mehrere Knoten verteilt, wobei eine einheitliche logische Struktur beibehalten wird. Traditionell verwenden Cluster mit gemeinsam genutztem Speicher ein Cluster-Dateisystem, das eine effiziente Replikation gewährleistet, indem verschiedene Benutzerverzeichnisse als separate Inode-Einträge gespeichert werden. Dies reduziert die Belastung des Dateisystems und verbessert die Leistung.
+
+:::note
+Vor der Veröffentlichung von 2025.01.1 mussten alle Knoten Zugriff auf `/var/lib/gromox/user` (in diesem Beispiel) haben, da einige Komponenten (insbesondere IMAP und POP3) über direkte E/A auf die Objektdateien zugreifen.
+:::
+
+:::note
+Je nach Art der Konfiguration des Admin-Knotens API ist es unter Umständen weiterhin möglich, auf gemeinsam genutzten Speicher zuzugreifen. Wenn es sich beim Admin API beispielsweise um einen Headless-Knoten handelt, möchten Sie möglicherweise Zugriff auf den Speicher haben, damit der API die Speicher für Sie anlegen kann.
+:::
+
+### Share-Nothing-Cluster
+
+Mit grommunio 2025.01.1 benötigen Komponenten keinen direkten E/A-Zugriff mehr auf den Mailbox-Speicher. Stattdessen werden Anfragen wie folgt bearbeitet:
+
+- Wenn eine Anfrage nicht zum lokalen Knoten gehört, geht das System wie folgt vor:
+  - Es ruft die Daten per RPC von dem Knoten ab, auf dem sich das Postfach befindet, oder
+  - es leitet die Anfrage im Proxy-Modus weiter und gibt die Antwort zurück.
+
+**Die wichtigsten Vorteile von Share-Nothing-Clustern**
+
+- Kein gemeinsamer Speicher erforderlich: Jeder Knoten arbeitet unabhängig, sodass kein gemeinsames Dateisystem benötigt wird.
+- Verbesserte Hochverfügbarkeit: Die Knoten können über verschiedene Standorte verteilt werden, ohne dass eine Abhängigkeit von zentralem Speicher besteht.
+- Kompatibilität mit modernen HA-Lösungen:
+
+Diese Architektur unterstützt von Haus aus Cloud-native Umgebungen wie Kubernetes, andere containerisierte Umgebungen sowie verschiedene Replikationsverfahren für Failover-Szenarien.
+
+Aus konfiguratorischer Sicht unterscheiden sich Share-Nothing-Cluster nicht von Setups mit gemeinsam genutztem Speicher, abgesehen davon, dass die Knoten keinen Zugriff auf die Postfächer der anderen Knoten benötigen. In Produktionsumgebungen können zusätzliche Replikationsverfahren zur Gewährleistung einer hohen Verfügbarkeit von Vorteil sein.
+
+### Failover
+
+Ein Cluster kann auch strenge Anforderungen an die Hochverfügbarkeit stellen (z. B. fünf Neuner, d. h. >99,999 %). Dieses Verfügbarkeitsniveau setzt voraus, dass bestimmte Cluster-Suite-Software in der Lage ist, bei diesen Failover-Wechseln der zweiten Ebene ein Failover durchzuführen. Für die Umsetzung solcher Szenarien, die durch das Enterprise-Abonnement abgedeckt sind, sieht der Arbeitsablauf in etwa wie folgt aus:
+
+- Ausfall einer Anwendung, eines Containers oder einer VM erkennen
+- Standby-Anwendung, -Container oder -VM aktivieren
+- Anfragen auf Anwendungsebene auf das neue Standby-System umleiten
+
+Für ein Failover des gesamten Cluster-Stacks von grommunio muss im Kern eine einfache MySQL-Abfrage ausgeführt sowie ein Neuladungssignal (SIGHUP) an die Hauptdienste (gromox-\*) gesendet werden. Zum Beispiel:
+
+``` sql
+UPDATE users SET homeserver=8 WHERE homeserver=4;
+```
+
+und ein anschließendes Neuladesignal, um etwaige Anwendungs-Caches neu zu laden.
+
+All dies lässt sich mithilfe bewährter Cluster-Dienste wie Pacemaker oder ähnlicher Produkte gut steuern.
+
+Die „Rückkehr“ zum Normalbetrieb kann beispielsweise dadurch erfolgen, dass alle Benutzer neu auf alle verfügbaren Knoten in Ihrer Installation verteilt werden:
+
+``` sql
+-- prepare environment
+SET @rownum = 0;
+SELECT COUNT(*) INTO @server_count FROM servers;
+
+-- reassign homeservers evenly
+UPDATE users
+JOIN (
+    SELECT
+    maildir,
+    (@rownum := @rownum + 1) AS rownum
+    FROM users
+    WHERE homeserver != 0
+    ORDER BY maildir
+) AS u_ordered
+ON users.maildir = u_ordered.maildir
+SET users.homeserver = (u_ordered.rownum - 1) % @server_count + 1
+WHERE users.homeserver != 0;
+```
+
+und anschließend erfolgt erneut ein Neuladen der Kerndienste (gromox-\*).
+
+## Protokoll / Komponentenablauf
+
+grommunio ist eine umfassende Kommunikations- und Kollaborationslösung, die Protokolle für eine Vielzahl von Computerstandards im Kommunikationsbereich abdeckt und bereitstellt. Die wichtigsten von grommunio bereitgestellten Protokolle sind:
+
+Protokolle auf Leitungsebene:
+
+- SMTP
+- IMAP
+- POP3
+
+Protokolle auf Anwendungsebene (auf Basis von HTTP):
+
+- RPC/HTTP (OutlookAnywhere)
+- MAPI/HTTP
+- EWS (Exchange Web Services)
+- EAS (Exchange ActiveSync)
+- CalDAV
+- CardDAV
+
+Angesichts dieser Vielzahl verfügbarer Protokolle muss grommunio über einen effizienten Komponentenfluss verfügen. Da für denselben Datensatz parallel auf verschiedene Protokolle zugegriffen werden kann, übernimmt grommunio die Parallelisierung und die Protokollverfolgung. Um Betrieb, Sicherheit und Funktionalität zu gewährleisten, nutzt der grommunio eine Reihe verschiedener Komponenten sowie eine pluginbasierte Struktur für größere Komponenten. Auf diese Weise lassen sich die Komponenten im Hinblick auf zukünftige Funktionserweiterungen ausbauen und ermöglichen Patches und Updates nahezu in Echtzeit. Komplexere Konfigurationen profitieren von der Komponenten-/Plugin-Architektur, da die Skalierbarkeit der Komponenten verschiedene Formen der Containerisierung und Orchestrierung ermöglicht.
+
+Die folgende Abbildung zeigt den kombinierten Protokoll- und Komponentenablauf für Komponenten auf Basis der grommunio-Groupware:
+
+<Diagram name="workflow-protocol" alt="Protokoll und Komponentenablauf der grommunio-Groupware" />
+
+### Proxy-Funktionen
+
+Standardmäßig werden die auf HTTP basierenden Dienste des grommunio über den nginx bereitgestellt. Dieser empfohlene Betriebsmodus bietet einen zusätzlichen Schutz für die Komponenten des gromox, da der nginx eingehende HTTP-Anfragen validiert, bevor diese vom gromox verarbeitet werden. Die interne Proxy-Konfiguration des nginx ist nicht für die horizontale Skalierung von Anfragen ausgelegt (und auch nicht erforderlich); stattdessen unterstützt der grommunio vor ihm platzierte Lastverteiler. Diese Lastverteiler fungieren effektiv als Reverse-Proxys mit integrierter Lastverteilungslogik. In solchen Fällen ist es ratsam, einen separaten Proxy vor allen von grommunio bereitgestellten Diensten einzusetzen.
+
+Wenn gromox Anfragen für einen anderen Knoten verarbeiten muss als den, auf dem es läuft, kommt der interne Logikcode von exmdb zum Einsatz und leitet den Datenverkehr an den entsprechenden Knoten weiter.
+
+Grommunio unterstützt verschiedene Load Balancer, die Zehntausende von Verbindungen pro Knoten verarbeiten können. Da jede Installation möglicherweise individuelle Konfigurationsanforderungen hat, sollen die folgenden Abschnitte eine Grundlage bieten und Anregungen für benutzerdefinierte Konfigurationen geben. Bitte beachten Sie, dass es verschiedene zusätzliche Optionen gibt, die hier nicht direkt behandelt werden und auch von anderen Load Balancern wie NGINX Plus, KEMP und/oder anderen angeboten werden.
+
+:::caution
+Bitte nutzen Sie diese Konfigurationsabschnitte lediglich als Anregung für eine Vorlage, die Sie an Ihre eigenen Anforderungen anpassen. Diese Beispiele erheben keinerlei Anspruch auf Vollständigkeit, da beispielsweise die Weiterleitung von POP3 und IMAP nicht verfügbar ist und Ihre individuellen Installationsanforderungen davon abweichen können. Im Folgenden wird ein Beispiel mit einer verteilten Konfiguration für eine Umgebung mit etwa 75.000 Benutzern gezeigt. Außerdem berücksichtigen diese Konfigurationsdateien keine speziellen OpenID Connect- oder 2FA-Installationen.
+:::
+
+#### HAPROXY
+
+:::caution
+Das folgende Beispiel ist ein funktionierender Ausgangspunkt, keine abgesicherte Produktionskonfiguration.
+Insbesondere ist die `ssl-default-bind-ciphers`-Liste zu freizügig
+(sie enthält weiterhin 3DES `DES-CBC3-SHA`- und DHE-Suiten); für den Produktiveinsatz sollten Sie die
+veralteten 3DES/DHE-Verschlüsselungen entfernen und TLS 1.2+ mit ECDHE/AES-GCM sowie die TLS 1.3-Suiten
+beibehalten. Passen Sie die Knotennamen, Ports und ACLs an Ihre Umgebung an.
+:::
+
+``` haproxy
+global
+ chroot /var/lib/haproxy
+ daemon
+ log /dev/log local0
+
+ group haproxy
+ user haproxy
+
+ maxconn 80000
+ stats timeout 30s
+ ulimit-n 165000
+
+ ca-base /etc/ssl/certs
+ crt-base /etc/ssl/private
+ ssl-default-bind-ciphers AES128-GCM-SHA256:AES128-SHA:AES128-SHA256:AES256-GCM-SHA384:AES256-SHA:AES256-SHA256:DES-CBC3-SHA:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES128-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-SHA256:DHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-CHACHA20-POLY1305:TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
+ ssl-default-bind-options ssl-min-ver TLSv1.2 no-tls-tickets
+ tune.ssl.default-dh-param 2048
+
+defaults
+ log global
+ mode http
+ option httplog
+ option dontlognull
+
+ retries 3
+ timeout connect 5s
+ timeout queue 30s
+ timeout client 300s
+ timeout server 300s
+
+frontend fe_http
+
+ bind :80
+ http-response set-header Strict-Transport-Security max-age=31536000
+ http-response set-header X-Content-Type-Options nosniff
+ http-response set-header X-Forwarded-Proto https
+ http-response set-header X-Frame-Options SAMEORIGIN
+
+ acl whitelist-ip src -f /etc/haproxy/ha_whitelist_main.txt
+ http-request silent-drop if HTTP_1.0
+ acl blacklist-ip src -f /etc/haproxy/ha_blacklist_main.txt
+ http-request deny if blacklist-ip
+
+ mode http
+ maxconn 80000
+
+ bind *:443 ssl crt /etc/haproxy/proxy.pem alpn h2,http/1.1
+ no option httpclose
+ option forwardfor
+ redirect scheme https code 301 if !{ ssl_fc }
+
+ # bind quic4@:443 ssl crt /etc/haproxy/proxy.pem alpn h3
+     # http-after-response add-header alt-svc 'h3=":443"; ma=60'
+
+ acl fe_haproxy hdr(host) -i mail.grommunio.at
+ acl admin dst_port 8443
+ acl auth path_beg /auth
+ acl autodiscover path_beg -i /autodiscover
+ acl chat path_beg /chat
+ acl colibri path_beg /colibri-ws
+ acl dav path_beg /dav
+ acl default path_beg /
+ acl eas path_beg /Microsoft-Server-ActiveSync
+ acl ews path_beg /EWS
+ acl files path_beg /files
+ acl hdr_connection_upgrade hdr(Connection) -i upgrade
+ acl hdr_upgrade_websocket hdr(Upgrade) -i websocket
+ acl mapi path_beg /mapi
+ acl meet path_beg /meet
+ acl oab path_beg /OAB
+ acl office path_beg /office
+ acl rpc path_beg /rpc/rpcproxy.dll
+ acl web path_beg /web
+
+ use_backend be_adminnodes if admin fe_haproxy
+ use_backend be_authnodes if auth fe_haproxy
+ use_backend be_chatnodes if chat fe_haproxy
+ use_backend be_filesnodes if files fe_haproxy
+ use_backend be_gromoxnodes if autodiscover
+ use_backend be_gromoxnodes if ews fe_haproxy
+ use_backend be_gromoxnodes if mapi fe_haproxy
+ use_backend be_gromoxnodes if rpc fe_haproxy
+ use_backend be_meetnodes if colibri fe_haproxy
+ use_backend be_meetnodes if hdr_connection_upgrade hdr_upgrade_websocket meet fe_haproxy
+ use_backend be_meetnodes if meet fe_haproxy
+ use_backend be_officenodes if office fe_haproxy
+ use_backend be_webnodes if dav fe_haproxy
+ use_backend be_webnodes if default fe_haproxy
+ use_backend be_webnodes if eas fe_haproxy
+ use_backend be_webnodes if web fe_haproxy
+
+frontend fe_imaps
+ mode tcp
+ option tcplog
+ bind :993 name imaps
+ acl blocklist-imap src -f /etc/haproxy/ha_blacklist_imap.txt
+ tcp-request connection reject if blocklist-imap
+ default_backend be_imaps
+
+frontend fe_pop3s
+ mode tcp
+ option tcplog
+ bind :995 name pop3s
+ acl blocklist-pop3s src -f /etc/haproxy/ha_blacklist_pop3.txt
+ tcp-request connection reject if blocklist-pop3s
+ default_backend be_pop3s
+
+frontend fe_smtp
+ mode tcp
+ option tcplog
+ bind :25 name smtp
+ acl blocklist-smtp src -f /etc/haproxy/ha_blacklist_smtp.txt
+ tcp-request connection reject if blocklist-smtp
+ default_backend be_smtp
+
+frontend fe_submission
+ mode tcp
+ option tcplog
+ bind :587 name submission
+ acl blocklist-submission src -f /etc/haproxy/ha_blacklist_submission.txt
+ tcp-request connection reject if blocklist-submission
+ default_backend be_submission
+
+frontend fe_admin
+ mode http
+ option httplog
+ option forwardfor
+ bind *:8443 ssl crt /etc/haproxy/proxy.pem alpn h2,http/1.1
+ acl whitelist-admin src -f /etc/haproxy/ha_whitelist_admin.txt
+ http-request deny if !whitelist-admin
+ default_backend be_adminnodes
+
+backend be_gromoxnodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance roundrobin
+ option forwardfor
+ option redispatch
+ server gromox01 mail01.grommunio.at:443 check ssl verify none
+ server gromox02 mail02.grommunio.at:443 check ssl verify none
+ server gromox03 mail03.grommunio.at:443 check ssl verify none
+
+backend be_chatnodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance roundrobin
+ option forwardfor
+ option http-server-close
+ option redispatch
+ server chat01 chat01.grommunio.at:443 check ssl verify none
+ server chat02 chat02.grommunio.at:443 check ssl verify none
+
+backend be_webnodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance roundrobin
+ option forwardfor
+ option http-server-close
+ option redispatch
+ server web01 web01.grommunio.at:443 check ssl verify none
+ server web02 web02.grommunio.at:443 check ssl verify none
+
+backend be_meetnodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance url_param room
+ hash-type consistent
+ option forwardfor
+ option http-server-close
+ option redispatch
+ server meet01 meet01.grommunio.at:443 check ssl verify none
+ server meet02 meet02.grommunio.at:443 check ssl verify none
+
+backend be_filesnodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance roundrobin
+ option forwardfor
+ option http-server-close
+ option redispatch
+ server files01 files01.grommunio.at:443 check ssl verify none
+ server files02 files02.grommunio.at:443 check ssl verify none
+
+backend be_officenodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance roundrobin
+ option forwardfor
+ option http-server-close
+ option redispatch
+ server office01 office01.grommunio.at:443 check ssl verify none
+
+backend be_authnodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance roundrobin
+ option forwardfor
+ option http-server-close
+ option redispatch
+ server auth01 auth01.grommunio.at:443 check ssl verify none
+
+backend be_adminnodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance roundrobin
+ option forwardfor
+ option http-server-close
+ option redispatch
+ server admin01 admin01.grommunio.at:8443 check ssl verify none
+
+backend be_imaps
+ stick-table type ip size 10240k expire 60m
+ mode tcp
+ balance source
+ stick on src
+ server imap01 classic01.grommunio.at:993 check
+ server imap02 classic02.grommunio.at:993 check
+
+backend be_pop3s
+ stick-table type ip size 10240k expire 60m
+ mode tcp
+ balance source
+ stick on src
+ server pop01 classic01.grommunio.at:995 check
+ server pop02 classic02.grommunio.at:995 check
+
+backend be_smtp
+ mode tcp
+ balance source
+ server smtp01 classic01.grommunio.at:25 send-proxy
+ server smtp02 classic02.grommunio.at:25 send-proxy
+
+backend be_submission
+ mode tcp
+ balance source
+ server submission01 classic01.grommunio.at:587 send-proxy
+ server submission02 classic02.grommunio.at:587 send-proxy
+```
+
+#### Postfix (PROXY protocol)
+
+Die Backends `be_smtp` und `be_submission` leiten den Datenverkehr mit `send-proxy` an Postfix weiter,
+sodass der Load Balancer einen PROXY-Protocol-Header voranstellt und das Backend die
+tatsächliche Client-Adresse anstelle der Proxy-Adresse sieht. Postfix muss angewiesen werden, diesen Header
+bei den über den Proxy bereitgestellten Diensten **zu erwarten** – andernfalls interpretiert es den Header als SMTP-Befehle
+und lehnt die Sitzung ab. In `master.cf`:
+
+``` text
+# Port 25, fronted by postscreen
+smtp       inet  n  -  n  -  1  postscreen
+  -o postscreen_upstream_proxy_protocol=haproxy
+smtpd      pass  -  -  n  -  -  smtpd
+
+# Port 587 (submission)
+submission inet  n  -  n  -  -  smtpd
+  -o smtpd_upstream_proxy_protocol=haproxy
+  -o syslog_name=postfix/submission
+```
+
+Wenn Port 25 von einem einfachen `smtpd` (ohne Postscreen) bedient wird, setze stattdessen
+`-o smtpd_upstream_proxy_protocol=haproxy` auf diesen Dienst.
+
+:::caution
+Der PROXY-Header ermöglicht es dem Absender, eine eigene Absenderadresse anzugeben; akzeptieren Sie ihn daher
+**nur** vom Load Balancer – beschränken Sie die Ports 25/587 mithilfe einer Firewall auf die
+Adresse(n) des Proxys (und/oder `postscreen_access_list`). Ohne
+`send-proxy` auf der HAProxy-Seite dürfen diese Optionen **nicht** gesetzt werden, da Postfix sonst
+normale Verbindungen ablehnt.
+:::
+
+#### NGINX
+
+Bitte beachten Sie, dass diese Konfiguration andere relevante Einstellungen von nginx in einer groß angelegten Scale-out-Installation nicht abdeckt. Bitte konsultieren Sie das nginx-Handbuch hinsichtlich bestimmter Konfigurationsanweisungen zur Skalierbarkeit, beispielsweise (unter anderem) *worker_processes*.
+
+Der optimale Wert hängt von vielen Faktoren ab, darunter die Anzahl der verfügbaren CPU-Kerne, das Auslastungsmuster und weitere Aspekte. Im Zweifelsfall ist die Einstellung der Anzahl der verfügbaren CPU-Kerne ein guter Ausgangspunkt.
+
+``` nginx
+upstream be_smtp {
+ server classic01.example.com:25;
+ server classic02.example.com:25;
+}
+
+upstream be_submission {
+ server classic01.example.com:587;
+ server classic02.example.com:587;
+}
+
+upstream be_imaps {
+ server classic01.example.com:993;
+ server classic02.example.com:993;
+}
+
+upstream be_pop3s {
+ server classic01.example.com:995;
+ server classic02.example.com:995;
+}
+
+upstream be_gromoxnodes {
+ server mail01.grommunio.at:443;
+ server mail02.grommunio.at:443;
+ server mail03.grommunio.at:443;
+}
+
+upstream be_adminnodes {
+ server admin01.grommunio.at:8443;
+}
+
+upstream be_archivenodes {
+ server archive01.grommunio.at:443;
+}
+
+upstream be_chatnodes {
+ server chat01.grommunio.at:443;
+ server chat02.grommunio.at:443;
+}
+
+upstream be_webnodes {
+ server web01.grommunio.at:443;
+ server web02.grommunio.at:443;
+}
+
+upstream be_filesnodes {
+ server files01.grommunio.at:443;
+ server files02.grommunio.at:443;
+}
+
+upstream be_officenodes {
+ server office01.grommunio.at:443;
+}
+
+upstream be_meetnodes {
+ server meet01.grommunio.at:443;
+ server meet02.grommunio.at:443;
+}
+
+upstream be_authnodes {
+ server auth01.grommunio.at:443;
+}
+
+stream {
+ server {
+  listen 25;
+  proxy_pass be_smtp;
+ }
+ server {
+  listen 587;
+  proxy_pass be_submission;
+ }
+ server {
+  listen 993;
+  proxy_pass be_imaps;
+ }
+ server {
+  listen 995;
+  proxy_pass be_pop3s;
+ }
+}
+
+server {
+ listen 80;
+ listen [::]:80;
+
+ server_name _;
+
+ error_log /var/log/nginx/error.log;
+ access_log /var/log/nginx/access.log;
+
+ return 301 https://$server_name$request_uri;
+}
+
+server {
+ listen 443 ssl http2;
+ listen [::]:443 ssl http2;
+ # listen 443 quic reuseport;
+ # listen [::]:443 quic reuseport;
+
+ server_name _;
+
+ ssl_certificate /etc/nginx/proxy.pem;
+ ssl_certificate_key /etc/nginx/proxy.key;
+ include ssl_params;
+
+ error_log /var/log/nginx/error.log;
+ access_log /var/log/nginx/access.log;
+
+ charset utf-8;
+
+ proxy_buffers 4 256k;
+ proxy_buffer_size 128k;
+ proxy_busy_buffers_size 256k;
+ proxy_http_version 1.1;
+ proxy_pass_header Authorization;
+ proxy_pass_header Date;
+ proxy_pass_header Server;
+ proxy_pass_request_headers on;
+ proxy_read_timeout 3h;
+ proxy_read_timeout 60s;
+
+ more_set_input_headers 'Authorization: $http_authorization';
+ more_set_headers -s 401 'WWW-Authenticate: Basic realm="mail.grommunio.at"';
+ proxy_set_header Accept-Encoding "";
+ proxy_set_header Connection "Keep-Alive";
+ proxy_set_header Host $host;
+ proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+ proxy_set_header X-Forwarded-Proto $scheme;
+ proxy_set_header X-Real-IP $remote_addr;
+
+ client_max_body_size 0;
+
+ location ~* /admin { proxy_pass https://be_adminnodes; }
+ location ~* /auth { proxy_pass https://be_authnodes; }
+ location ~* /antispam { proxy_pass https://be_adminnodes/antispam; }
+ location ~* /archive { proxy_pass https://be_gromoxnodes/archive; }
+ location ~* /autodiscover { proxy_pass https://be_gromoxnodes/Autodiscover; }
+ location ~* /colibri-ws { proxy_pass https://be_meetnodes/meet; }
+ location ~* /chat { proxy_pass https://be_chatnodes/chat; }
+ location ~* /EWS { proxy_pass https://be_gromoxnodes/EWS; }
+ location ~* /files { proxy_pass https://be_filesnodes/files; }
+ location ~* /mapi { proxy_pass https://be_gromoxnodes/mapi; }
+ location ~* /meet { proxy_pass https://be_meetnodes/meet; }
+ location ~* /office { proxy_pass https://be_officenodes/office; }
+ location ~* /Microsoft-Server-ActiveSync { proxy_pass https://be_webnodes/Microsoft-Server-ActiveSync; }
+ location ~* /oab { proxy_pass https://be_gromoxnodes/OAB; }
+ location ~* /Rpc { proxy_pass https://be_gromoxnodes/Rpc; }
+ location ~* /web { proxy_pass https://be_webnodes/web; }
+
+ location / { proxy_pass https://be_gromoxnodes/; }
+}
+```
+
+#### Knotenorientierte Lastverteilung
+
+Das obige Beispiel berücksichtigt keine stark verteilten Installationen. Mit dem folgenden Beispiel und einigen Automatisierungen kann haproxy so konfiguriert werden, dass es den geeigneten Backend-Knoten direkt auswählt, wodurch die Notwendigkeit entfällt, dass Backend-Knoten die Anfragen durch RPC-Weiterleitungen und/oder knotenübergreifenden Datenverkehr verteilen müssen. Damit dies funktioniert, muss eine spezielle *mailbox.map*-Datei erstellt werden. Dies kann auf verschiedene Weise erfolgen, unter anderem durch Anbindung an die grommunio-admin-API.
+
+Auf Low-Level-Ebene – durch direkten Zugriff auf die grommunio-Datenbank – lässt sich dies beispielsweise mit folgender Abfrage bewerkstelligen:
+
+``` sh
+mysql -N -e "
+SELECT u.username, s.hostname
+FROM users u
+JOIN servers s ON s.id = u.homeserver
+UNION ALL
+SELECT a.aliasname, s.hostname
+FROM aliases a
+JOIN users u ON u.username = a.mainname
+JOIN servers s ON s.id = u.homeserver;
+" > /etc/haproxy/mailbox.map
+```
+
+Bitte beachten Sie, dass hierfür die entsprechende Zuordnung von Postfächern zu Servern konfiguriert sein muss. In diesem Beispiel muss die HAProxy-Installation ordnungsgemäß aufgelöst werden können (wenn „extname“-Hostnamen in der HAProxy-Konfiguration nicht so eingestellt sind, dass sie öffentlich erreichbar sind).
+
+Diese Konfiguration basiert auf zwei Annahmen:
+
+- Alle Backend-Knoten bedienen auch Webanfragen (grommunio-(web\|sync) usw.).
+- Die Gromox-Knoten sind gemäß der Dokumentation für Mehrserver-Konfigurationen entsprechend konfiguriert.
+
+``` haproxy
+global
+ chroot /var/lib/haproxy
+ daemon
+ log /dev/log local0
+ group haproxy
+ user haproxy
+ maxconn 80000
+ stats timeout 30s
+ ulimit-n 165000
+ ca-base /etc/ssl/certs
+ crt-base /etc/ssl/private
+ ssl-default-bind-ciphers AES128-GCM-SHA256:AES128-SHA:AES128-SHA256:AES256-GCM-SHA384:AES256-SHA:AES256-SHA256:DES-CBC3-SHA:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES128-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-SHA256:DHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-CHACHA20-POLY1305:TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
+ ssl-default-bind-options ssl-min-ver TLSv1.2 no-tls-tickets
+ tune.ssl.default-dh-param 2048
+
+defaults
+ log global
+ mode http
+ option httplog
+ option dontlognull
+ retries 3
+ timeout connect 5s
+ timeout queue 30s
+ timeout client 300s
+ timeout server 300s
+
+frontend fe_http
+ bind :80
+ http-response set-header Strict-Transport-Security max-age=31536000
+ http-response set-header X-Content-Type-Options nosniff
+ http-response set-header X-Forwarded-Proto https
+ http-response set-header X-Frame-Options SAMEORIGIN
+
+ acl whitelist-ip src -f /etc/haproxy/ha_whitelist_main.txt
+ http-request silent-drop if HTTP_1.0
+ acl blacklist-ip src -f /etc/haproxy/ha_blacklist_main.txt
+ http-request deny if blacklist-ip
+
+ mode http
+ maxconn 80000
+
+ bind *:443 ssl crt /etc/haproxy/proxy.pem alpn h2,http/1.1
+ no option httpclose
+ option forwardfor
+ redirect scheme https code 301 if !{ ssl_fc }
+
+ # --- extract mailbox for direct routing ---
+ acl web_login path_beg /web/?login
+ http-request set-var(txn.mbox) req.body_param(username) if web_login
+ http-request set-var(txn.mbox) urlp(MailboxId) if autodiscover or ews or mapi or rpc
+
+ acl fe_haproxy hdr(host) -i mail.grommunio.at
+ acl admin dst_port 8443
+ acl auth path_beg /auth
+ acl autodiscover path_beg -i /autodiscover
+ acl chat path_beg /chat
+ acl colibri path_beg /colibri-ws
+ acl dav path_beg /dav
+ acl default path_beg /
+ acl eas path_beg /Microsoft-Server-ActiveSync
+ acl ews path_beg /EWS
+ acl files path_beg /files
+ acl hdr_connection_upgrade hdr(Connection) -i upgrade
+ acl hdr_upgrade_websocket hdr(Upgrade) -i websocket
+ acl mapi path_beg /mapi
+ acl meet path_beg /meet
+ acl oab path_beg /OAB
+ acl office path_beg /office
+ acl rpc path_beg /rpc/rpcproxy.dll
+ acl web path_beg /web
+
+ use_backend be_adminnodes if admin fe_haproxy
+ use_backend be_authnodes if auth fe_haproxy
+ use_backend be_chatnodes if chat fe_haproxy
+ use_backend be_filesnodes if files fe_haproxy
+ use_backend be_gromoxnodes if autodiscover
+ use_backend be_gromoxnodes if ews fe_haproxy
+ use_backend be_gromoxnodes if mapi fe_haproxy
+ use_backend be_gromoxnodes if rpc fe_haproxy
+ use_backend be_meetnodes if colibri fe_haproxy
+ use_backend be_meetnodes if hdr_connection_upgrade hdr_upgrade_websocket meet fe_haproxy
+ use_backend be_meetnodes if meet fe_haproxy
+ use_backend be_officenodes if office fe_haproxy
+ use_backend be_webnodes if dav fe_haproxy
+ use_backend be_webnodes if default fe_haproxy
+ use_backend be_webnodes if eas fe_haproxy
+ use_backend be_webnodes if web fe_haproxy
+
+frontend fe_imaps
+ mode tcp
+ option tcplog
+ bind :993 name imaps
+ acl blocklist-imap src -f /etc/haproxy/ha_blacklist_imap.txt
+ tcp-request connection reject if blocklist-imap
+ default_backend be_imaps
+
+frontend fe_pop3s
+ mode tcp
+ option tcplog
+ bind :995 name pop3s
+ acl blocklist-pop3s src -f /etc/haproxy/ha_blacklist_pop3.txt
+ tcp-request connection reject if blocklist-pop3s
+ default_backend be_pop3s
+
+frontend fe_smtp
+ mode tcp
+ option tcplog
+ bind :25 name smtp
+ acl blocklist-smtp src -f /etc/haproxy/ha_blacklist_smtp.txt
+ tcp-request connection reject if blocklist-smtp
+ default_backend be_smtp
+
+frontend fe_submission
+ mode tcp
+ option tcplog
+ bind :587 name submission
+ acl blocklist-submission src -f /etc/haproxy/ha_blacklist_submission.txt
+ tcp-request connection reject if blocklist-submission
+ default_backend be_submission
+
+frontend fe_admin
+ mode http
+ option httplog
+ option forwardfor
+ bind *:8443 ssl crt /etc/haproxy/proxy.pem alpn h2,http/1.1
+ acl whitelist-admin src -f /etc/haproxy/ha_whitelist_admin.txt
+ http-request deny if !whitelist-admin
+ default_backend be_adminnodes
+
+backend be_gromoxnodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance roundrobin
+ option forwardfor
+ option redispatch
+ server gromox01 mail01.grommunio.at:443 check ssl verify none
+ server gromox02 mail02.grommunio.at:443 check ssl verify none
+ server gromox03 mail03.grommunio.at:443 check ssl verify none
+ # pick correct gromox node when mailbox is known
+ use-server %[var(txn.mbox),map(/etc/haproxy/mailbox.map)] if { var(txn.mbox) -m found }
+
+backend be_chatnodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance roundrobin
+ option forwardfor
+ option http-server-close
+ option redispatch
+ server chat01 chat01.grommunio.at:443 check ssl verify none
+ server chat02 chat02.grommunio.at:443 check ssl verify none
+
+backend be_webnodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance roundrobin
+ option forwardfor
+ option http-server-close
+ option redispatch
+ server web01 web01.grommunio.at:443 check ssl verify none
+ server web02 web02.grommunio.at:443 check ssl verify none
+ # route login requests to the mailbox's home node (if web servers share names with gromox nodes)
+ use-server %[var(txn.mbox),map(/etc/haproxy/mailbox.map)] if { var(txn.mbox) -m found }
+
+backend be_meetnodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance url_param room
+ hash-type consistent
+ option forwardfor
+ option http-server-close
+ option redispatch
+ server meet01 meet01.grommunio.at:443 check ssl verify none
+ server meet02 meet02.grommunio.at:443 check ssl verify none
+
+backend be_filesnodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance roundrobin
+ option forwardfor
+ option http-server-close
+ option redispatch
+ server files01 files01.grommunio.at:443 check ssl verify none
+ server files02 files02.grommunio.at:443 check ssl verify none
+
+backend be_officenodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance roundrobin
+ option forwardfor
+ option http-server-close
+ option redispatch
+ server office01 office01.grommunio.at:443 check ssl verify none
+
+backend be_authnodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance roundrobin
+ option forwardfor
+ option http-server-close
+ option redispatch
+ server auth01 auth01.grommunio.at:443 check ssl verify none
+
+backend be_adminnodes
+ stick-table type ip size 10240k expire 60m
+ stick on src
+ balance roundrobin
+ option forwardfor
+ option http-server-close
+ option redispatch
+ server admin01 admin01.grommunio.at:8443 check ssl verify none
+
+backend be_imaps
+ stick-table type ip size 10240k expire 60m
+ mode tcp
+ balance source
+ stick on src
+ server imap01 classic01.grommunio.at:993 check
+ server imap02 classic02.grommunio.at:993 check
+
+backend be_pop3s
+ stick-table type ip size 10240k expire 60m
+ mode tcp
+ balance source
+ stick on src
+ server pop01 classic01.grommunio.at:995 check
+ server pop02 classic02.grommunio.at:995 check
+
+backend be_smtp
+ mode tcp
+ balance source
+ server smtp01 classic01.grommunio.at:25 send-proxy
+ server smtp02 classic02.grommunio.at:25 send-proxy
+
+backend be_submission
+ mode tcp
+ balance source
+ server submission01 classic01.grommunio.at:587 send-proxy
+ server submission02 classic02.grommunio.at:587 send-proxy
+```
+
+So funktioniert es:
+
+- Das Frontend „fe_http“ erfasst die Mailbox aus Anfragen an AutoDiscover/EWS/MAPI oder aus dem POST-Request der grommunio-Web-Anmeldung.
+- Das Backend „be_gromoxnodes“ verwendet „use-server“ mit „mailbox.map“, um den richtigen gromox-Knoten auszuwählen, sofern eine Zuordnung vorhanden ist; andernfalls greift es auf Round-Robin zurück.
+- Das Backend „be_webnodes“ kann dieselbe Abfrage durchführen, wenn die Webserver dieselben Servernamen wie die gromox-Knoten verwenden (andernfalls wird weiterhin „Round-Robin“ verwendet).
+- Dadurch bleiben gromox-Anfragen und grommunio-Web-Sitzungen auf dem Heimserver der Mailbox, wodurch unnötige Weiterleitungen oder Proxy-Hops vermieden werden.
+
+:::caution
+Bitte beachten Sie, dass dieses Konfigurationsbeispiel weder reine TCP-Verbindungen (wie z. B. die Übermittlung) abdeckt noch OIDC berücksichtigt.
+:::
+
+Bei OIDC/Keycloak wird ein anderer Ansatz empfohlen – wir empfehlen hier, bei der Anmeldung ein Cookie zu setzen und dieses in HAProxy auszuwerten, um es mit der Usermap abzugleichen, z. B. durch Erweiterung des nginx des IdP, indem der entsprechende Header gelesen und ein Cookie gesetzt wird, das den Benutzernamen enthält:
+
+``` nginx
+proxy_set_header Authorization $http_authorization;
+
+# After successful login, extract username from ID token (needs lua/openresty or auth_request)
+add_header Set-Cookie "kc_username=$jwt_claim_preferred_username; Path=/; HttpOnly";
+```
+
+### SMTP
+
+SMTP ist das Hauptprotokoll für den E-Mail-Transport. Zur Veranschaulichung wird zwischen internem und externem E-Mail-Verkehr unterschieden.
+
+Der gesamte Transport ist so konfiguriert, dass bei der E-Mail-Verarbeitung keine Lücken entstehen. Auf diese Weise schützt grommunio auch vor internen Bedrohungen (beispielsweise Spam oder der Verbreitung von Viren).
+
+Die hier beschriebene Konfiguration definiert den Standardkonfigurationssatz. In vielen Fällen sind jedoch auch komplexere Konfigurationen denkbar, beispielsweise bei einer erweiterten Integration von Sicherheitsmodulen vom Typ appliance. Die folgenden Workflows enthalten die Prozessdefinition, die einen Überblick darüber gibt, an welcher Stelle ein bevorzugter Hook implementiert werden könnte.
+
+#### Eingehend
+
+<Diagram name="workflow-smtpin" alt="SMTP-Workflow für eingehende E-Mails" />
+
+E-Mails werden wie folgt bearbeitet (gilt für eingehende und ausgehende E-Mails):
+
+1.  Der integrierte Postfix MTA empfängt Nachrichten und leitet sie über das *Milter*-Mailfilterprotokoll an grommunio-antispam weiter.
+2.  grommunio-antispam überprüft die Nachricht auf Spam. Falls konfiguriert, leitet grommunio-antispam die Nachricht (optional) an einen Antiviren-Dienst weiter.
+3.  Die Antwort der Antiviren-Prüfung wird von antispam zurückgelesen.
+4.  Die Antwort von „antispam“ wird von Postfix zurückgelesen.
+5.  Postfix wertet den Inhalt des Adresspaares „Envelope-From“ und „Envelope-To“ aus, um zu entscheiden, ob es sich um eingehende oder ausgehende E-Mail handelt.
+6.  Eingehende E-Mails werden an den gromox-Zustellungsprozess weitergeleitet, der die E-Mail in ein MAPI-Objekt umwandelt und in das Postfach des Benutzers ablegt.
+7.  Ausgehende E-Mails werden an einen konfigurierten Relay-Host oder an den nächsten MX-Zielserver zugestellt, der für die Zieladresse zuständig ist.
+
+<Diagram name="workflow-smtpout" alt="SMTP-Workflow für ausgehende E-Mails" />
+
+### Arbeitsablauf für RPC/HTTP, MAPI/HTTP und EWS
+
+<Diagram name="workflow-rpcews" alt="RPC- und EWS-Workflow" />
+
+Die wichtigsten Protokolle, die von grommunio für die MAPI-basierte Konnektivität verwendet werden – wie sie beispielsweise bei Microsoft und Outlook zum Einsatz kommen – sind:
+
+- RPC/HTTP (OutlookAnywhere)
+- MAPI/HTTP
+- EWS (Exchange Web Services)
+
+Alle diese Protokolle basieren auf HTTP, weshalb sie – vor allem aus Gründen der Sicherheit, Skalierbarkeit und Überwachung – über den mitgelieferten nginx-Webserver geleitet werden.
+
+Verbindungen auf Basis von MAPI werden wie folgt verarbeitet:
+
+1.  In der ersten Phase nutzt der Endpunkt die AutoDiscover (https://learn.microsoft.com/en-us/exchange/architecture/client-access/autodiscover))-Technologie (mit Authentifizierung), um herauszufinden, welche Service-Endpunkt-URL für ihn zuständig ist.
+2.  Wenn der AutoDiscover-Endpunkt beim selben Dienst landet (andernfalls wird er zur URL des anderen Endpunkts umgeleitet), leitet nginx die Verbindung direkt an den gromox-http-Dienst weiter, der die Verbindung verarbeitet.
+3.  Für den Zugriff auf das Postfach des Benutzers stellt das emsmdb-Plugin von gromox-http eine Verbindung zum exmdb-Plugin her, um die Postfachdaten zu übermitteln.
+
+### Exchange ActiveSync (EAS)
+
+<Diagram name="workflow-eas" alt="Exchange ActiveSync (EAS) – Arbeitsablauf" />
+
+Das für Mobilgeräte und Tablets hauptsächlich verwendete Protokoll ist Exchange ActiveSync (EAS). EAS ist ein zustandsbasiertes Synchronisationsprotokoll, das Zustandsdaten verwendet, um seinen aktuellen Synchronisationsstatus zu ermitteln. EAS wird oft synonym als „Push-Mail“ bezeichnet, da es permanent mit seinem Dienst verbunden ist und auf Aktualisierungen wartet. Daher wird EAS als Protokoll für mobile Geräte empfohlen, insbesondere in unzuverlässigen Netzwerken wie Mobilfunknetzen. Zwar ist es möglich, bestimmte Clients, darunter Microsoft Mail und Microsoft Outlook, zu verbinden, davon wird jedoch dringend abgeraten. Im Vergleich zu leistungsstärkeren Alternativen wie MAPI/HTTP ist das EAS-Protokoll bei der Übertragung großer Datenmengen oder bei großen bis sehr großen (10 GB+) Postfächern langsamer. Schließlich bietet das EAS-Protokoll nur einen Teil der Funktionen, die bei anderen Protokollen verfügbar sind.
+
+Verbindungen auf Basis von EAS werden wie folgt verarbeitet:
+
+1.  In der ersten Phase nutzt der Endpunkt die AutoDiscover (https://learn.microsoft.com/en-us/exchange/architecture/client-access/autodiscover))-Technologie (mit Authentifizierung), um herauszufinden, welche Service-Endpunkt-URL für ihn zuständig ist.
+2.  Wenn der AutoDiscover-Endpunkt beim selben Dienst landet (andernfalls wird er zur URL des anderen Endpunkts umgeleitet), leitet nginx die Verbindung an grommunio-sync weiter, das seinem Gerät nativ den Endpunkt /Microsoft-Server-ActiveSync bereitstellt.
+3.  Für den Zugriff auf die Mailbox des Benutzers stellt grommunio-sync eine Verbindung zu gromox-zcore her, das die Schnittstellen PHP-MAPI für den Zugriff bereitstellt
+4.  gromox-http über das exmdb-Plugin zur Bereitstellung der Postfachdaten.
+
+### POP3
+
+<Diagram name="workflow-pop3" alt="POP3-Workflow" />
+
+### IMAP
+
+<Diagram name="workflow-imap" alt="IMAP-Workflow" />
+
+### CalDAV / CardDAV (grommunio-dav)
+
+grommunio-dav bietet standardbasierten Zugriff auf **CalDAV** (Kalender, Aufgaben) und
+**CardDAV** (Kontakte) für Clients, die DAV unterstützen – wie beispielsweise Apple
+Kalender/Kontakte auf iOS sowie macOS, Mozilla Thunderbird und Evolution. Clients
+erreichen es über HTTPS bis nginx, das DAV-Anfragen an grommunio-dav weiterleitet;
+grommunio-dav nutzt php-mapi/gromox-zcore, um das Postfach im
+Informationsspeicher (exmdb) zu lesen und zu schreiben. Die Client-Einrichtung wird von AutoConfig unterstützt, und die
+`.well-known`-Weiterleitungen werden von gromox-http bereitgestellt.
+
+<Diagram name="workflow-dav" alt="CalDAV / CardDAV (grommunio-dav) – Arbeitsablauf" />
+
+### Authentifizierung
+
+<Diagram name="workflow-auth" alt="Authentifizierungsablauf" />

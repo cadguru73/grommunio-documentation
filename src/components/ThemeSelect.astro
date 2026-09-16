@@ -1,0 +1,92 @@
+---
+/**
+ * Theme switcher as a sun / moon / auto segmented control (icon-only, so it
+ * needs no translation). Overrides Starlight's default <select>-based
+ * ThemeSelect; reuses Starlight's `starlight-theme` localStorage convention and
+ * the global StarlightThemeProvider so there is no flash of unstyled content.
+ */
+import { Icon } from 'astro-icon/components';
+
+const opts = [
+  { value: 'light', icon: 'lucide:sun', label: 'Light' },
+  { value: 'dark', icon: 'lucide:moon', label: 'Dark' },
+  { value: 'auto', icon: 'lucide:monitor', label: 'System' },
+];
+---
+
+<gx-theme-select class="gx-theme" aria-label={Astro.locals.t('themeSelect.accessibleLabel')}>
+  {opts.map((o) => (
+    <button type="button" data-theme-value={o.value} title={o.label} aria-label={o.label} aria-pressed="false">
+      <Icon name={o.icon} />
+    </button>
+  ))}
+</gx-theme-select>
+
+<style>
+  .gx-theme {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    padding: 2px;
+    border-radius: 999px;
+    border: 1px solid var(--sl-color-hairline-light);
+  }
+  .gx-theme button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.85rem;
+    height: 1.85rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--sl-color-gray-2);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+  }
+  .gx-theme button:hover { color: var(--sl-color-white); }
+  .gx-theme button[aria-pressed='true'] {
+    background: color-mix(in srgb, var(--gx-azure-500, #1f7fe5) 18%, transparent);
+    color: var(--sl-color-white);
+  }
+  .gx-theme svg { width: 1.05rem; height: 1.05rem; }
+</style>
+
+<script>
+  type Theme = 'auto' | 'dark' | 'light';
+  const storageKey = 'starlight-theme';
+  const parse = (t: unknown): Theme => (t === 'auto' || t === 'dark' || t === 'light' ? t : 'auto');
+  const load = (): Theme => parse(typeof localStorage !== 'undefined' && localStorage.getItem(storageKey));
+  const store = (t: Theme) => {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(storageKey, t === 'light' || t === 'dark' ? t : '');
+  };
+  const preferred = (): Theme => (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+
+  function apply(theme: Theme): void {
+    document.documentElement.dataset.theme = theme === 'auto' ? preferred() : theme;
+    store(theme);
+    document.querySelectorAll('.gx-theme').forEach((group) =>
+      group.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
+        b.setAttribute('aria-pressed', String(b.dataset.themeValue === theme))
+      )
+    );
+    // keep any Starlight <select> pickers (if present) in sync
+    (window as any).StarlightThemeProvider?.updatePickers?.(theme);
+  }
+
+  matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    if (load() === 'auto') apply('auto');
+  });
+
+  class GxThemeSelect extends HTMLElement {
+    constructor() {
+      super();
+      apply(load());
+      this.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
+        b.addEventListener('click', () => apply(parse(b.dataset.themeValue)))
+      );
+    }
+  }
+  if (!customElements.get('gx-theme-select')) customElements.define('gx-theme-select', GxThemeSelect);
+</script>

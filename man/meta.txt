@@ -1,9 +1,0 @@
-.. meta::
-   :description: The main collection of man pages about grommunio and gromox for administrators.
-   :keywords: grommunio man pages administrator
-   :author: grommunio GmbH
-   :publisher: grommunio GmbH
-   :copyright: grommunio GmbH, 2025
-   :page-topic: software
-   :page-type: documentation
-   :robots: index, follow

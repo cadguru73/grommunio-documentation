@@ -1,0 +1,50 @@
+---
+title: Setup guides
+description: Task-oriented, step-by-step guides for the optional grommunio components — antispam, single sign-on, Meet, Chat, Files & Office, Archive, mobile devices — and for backup and restore.
+sidebar:
+  label: Overview
+  order: 0
+---
+
+The **Administration** manual describes grommunio as a system. The guides in
+this section are **task-oriented**: each one takes a single component or
+operational topic from prerequisites to a verified, working result, with a
+verification checklist and a troubleshooting table at the end.
+
+All guides assume a working grommunio installation — the appliance set up as
+described in the [Quickstart](/admin/quickstart/), with DNS, TLS and the first
+domain and user in place. Start with the
+[post-installation checklist](/guides/post-install/) if you have just finished
+`grommunio-setup`.
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard title="Post-installation checklist" href="/guides/post-install/" description="Verify services, repositories and ports; set up MX, SPF, DKIM and DMARC; prove end-to-end mail flow." />
+  <LinkCard title="Antispam (Rspamd)" href="/guides/antispam/" description="Understand scores and actions, test safely, train Bayes, manage allow/deny lists and operate grommunio-antispam." />
+  <LinkCard title="SSO with Keycloak" href="/guides/sso-keycloak/" description="Central login and MFA for grommunio Web and the collaboration apps with grommunio-auth and Keycloak." />
+  <LinkCard title="Meet" href="/guides/meet/" description="Deploy browser-based video conferencing, optionally behind SSO, and connect it to the calendar." />
+  <LinkCard title="Chat" href="/guides/chat/" description="Set up team messaging, activate it per domain and user, and verify multi-tenancy." />
+  <LinkCard title="Files & Office" href="/guides/files-office/" description="File sync and online document editing, integrated with grommunio Web." />
+  <LinkCard title="Archive" href="/guides/archive/" description="Compliance e-mail archiving with full-text search and restore into the mailbox." />
+  <LinkCard title="Mobile devices (EAS)" href="/guides/mobile-devices/" description="Exchange ActiveSync for phones and tablets: enable, connect, manage devices and policies, remote wipe." />
+  <LinkCard title="Backup & restore" href="/guides/backup-restore/" description="Consistent backups, a full disaster-recovery rehearsal and single-mailbox restores." />
+</CardGrid>
+
+## Related topics elsewhere
+
+- [High availability](/admin/high-availability/) — the Pacemaker/DRBD reference
+  cluster, including failover test scenarios.
+- [Kerberos SSO](/admin/kerberos-sso/) — transparent sign-in for domain-joined
+  Windows clients (the alternative to Keycloak-based SSO).
+- [IMAP migration with imapsync](/migration/imap/) — moving mailboxes from any
+  IMAP server.
+- [Operations](/admin/operations/) — TLS, updates, backup artefacts and size
+  limits.
+
+## Offline reading
+
+This section is also available to download for offline use:
+
+- [Download as PDF](/pdf/grommunio-guides.pdf)
+- [Download as EPUB](/epub/grommunio-guides.epub)

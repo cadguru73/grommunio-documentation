@@ -1,0 +1,9 @@
+flowchart TD
+  net(["Internet"]):::ext
+  postfix["postfix · MTA"]:::ext
+  AS["grommunio-antispam<br/>━━━━━━━━━━━━━━<br/>SPF · DKIM · DMARC · ARC<br/>RBL / DNSBL · SURBL<br/>Bayes · fuzzy · regex rules<br/>anti-virus (ClamAV)<br/>greylisting · rate limit"]:::security
+  queue["gromox-delivery-queue"]
+
+  net -->|1 · SMTP| postfix
+  postfix <-->|2 · milter check / verdict| AS
+  postfix -->|3 · accept| queue

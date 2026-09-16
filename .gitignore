@@ -1,3 +1,36 @@
-*Corel*
+# --- Astro / Node ---
+node_modules/
+dist/
+.astro/
+*.log
+npm-debug.log*
+
+# --- cloned upstream repos (man-page / admin-CLI / OpenAPI / dev generators) ---
+scripts/.gromox/
+scripts/.aapi/
+scripts/.gromox-wiki/
+# scratch area the generators stage output in before swapping it over the
+# committed trees (see scripts/lib/outdir.mjs); removed on a clean run
+scripts/.staging/
+# NOTE: the generated trees (src/content/docs/man, src/content/docs/cli) and
+# src/openapi/adminapi.yaml are committed as snapshots so the branch builds
+# offline; `npm run gen:all` refreshes them from upstream before a deploy.
+
+# --- generated exports (PDF/EPUB live in public/ so builds bundle them) ---
+public/pdf/
+public/epub/
+dist-pdf/
+dist-epub/
+*.epub
+
+# --- legacy Sphinx build dirs ---
 *-build
 */legal_notice.rst
+
+# --- secrets (DeepL key for the translation pipeline) ---
+.env
+scripts/.env
+
+# --- misc ---
+*Corel*
+.DS_Store

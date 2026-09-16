@@ -1,9 +1,0 @@
-.. meta::
-   :description: The main grommunio documentation for administrators.
-   :keywords: grommunio documentation administrator
-   :author: grommunio GmbH
-   :publisher: grommunio GmbH
-   :copyright: grommunio GmbH, 2025
-   :page-topic: software
-   :page-type: documentation
-   :robots: index, follow

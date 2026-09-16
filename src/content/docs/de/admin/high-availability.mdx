@@ -1,0 +1,420 @@
+---
+title: "Hochverfügbarkeit (Pacemaker, DRBD und eine Floating-IP)"
+description: "Eine Referenzarchitektur für eine hochverfügbare grommunio-Bereitstellung – Pacemaker/Corosync-Clusterverwaltung, DRBD-Speicherreplikation auf Blockebene, eine „floating“ virtuelle IP-Adresse und ein geordneter Dienststapel, der als Einheit auf eine Ausfallsicherung umschaltet."
+sidebar:
+  label: "Hohe Verfügbarkeit"
+  order: 75
+---
+
+import Diagram from '../../../../components/Diagram.astro';
+
+Dieses Handbuch beschreibt eine **Referenzarchitektur** für den Betrieb von grommunio in einem
+hochverfügbaren (HA) Aktiv/Standby-Cluster mit zwei Knoten und einem dritten Witness-Knoten.
+Der Speicher wird auf Blockebene mit **DRBD** repliziert, der Cluster wird von
+**Pacemaker/Corosync** verwaltet, und Clients erreichen den aktiven Knoten über eine **floating
+virtual IP (VIP)**. Bei einem Failover wird der gesamte Stack – Speicher, IP und Dienste –
+gemeinsam auf den überlebenden Knoten verlagert.
+
+:::note [Referenzarchitektur]
+Die unten aufgeführten Hostnamen, IP-Adressen, Netzwerkschnittstellen und Domänen sind **Beispiele**.
+Ersetzen Sie sie durch Ihre eigenen Werte. DRBD, Fencing und Netzwerkspezifikationen hängen von
+Ihrer Hardware und Ihrer Umgebung ab – betrachten Sie Ihre Live-Installation als maßgebliche
+Quelle und passen Sie die Codeausschnitte entsprechend an.
+:::
+
+## Architekturübersicht
+
+- **Zwei Datenknoten** (`node1`, `node2`) replizieren ein Blockgerät untereinander
+  mit DRBD. Zu jedem Zeitpunkt ist einer *primär* (aktiv), der andere *sekundär*.
+- Der aktive Knoten startet DRBD, mountet das replizierte Volume als XFS unter
+  `/grodata`, **bindet** die Dienstdatenverzeichnisse von `/grodata/*` auf
+  die Standardpfade `/var/lib/*` ein, übernimmt die **floating VIP** und startet alle
+  grommunio/Gromox-Dienste.
+- Ein **Witness-Knoten** (`node3`) nimmt nur an der Quorum-Abstimmung teil. Er speichert keine
+  Daten und führt keine grommunio-Dienste aus.
+- Clients lösen `grommunio.example.com` über DNS in die VIP auf, die sich immer
+  auf dem aktiven Knoten befindet.
+
+<Diagram name="cluster-ha" alt="Hochverfügbarer grommunio-Cluster: Clients greifen auf eine Floating-VIP-Adresse des aktiven Knotens zu, der DRBD ausführt, das Verzeichnis /grodata einbindet, Datenverzeichnisse per Bind-Mount einbindet und den Service-Stack ausführt; ein zweiter Knoten hostet die DRBD-Sekundärinstanz und ein dritter Knoten stellt das Quorum bereit." />
+
+### Knoten und Rollen
+
+| Rolle | Beispiel-Host | Zweck |
+| --- | --- | --- |
+| Datenknoten 1 | `node1` | DRBD-Peer; berechtigt, den aktiven Stack auszuführen |
+| Datenknoten 2 | `node2` | DRBD-Peer; berechtigt, den aktiven Stack auszuführen |
+| Witness / Quorum | `node3` | Nur Quorum-Abstimmung – keine Daten, keine Dienste |
+| Floating VIP | `10.0.0.10/24` | Die Dienstadresse, mit der sich Clients verbinden |
+
+## Voraussetzungen
+
+- Drei Knoten mit **derselben Betriebssystem- und grommunio-Paketversion** (zwei Datenknoten
+  sowie ein Witness).
+- Ein dediziertes **Blockgerät** auf jedem Datenknoten für DRBD (gleiche Größe auf
+  beiden).
+- Eine freie IP-Adresse für die **VIP** auf der Cluster-Netzwerkschnittstelle
+  (`eth0` in den Beispielen – verwenden Sie Ihren tatsächlichen Netzwerkkartennamen, z. B. `ens192`).
+- Zuverlässige Namensauflösung (`/etc/hosts` Einträge für alle Knoten), Zeitsynchronisation
+  (chrony) und SSH-Konnektivität zwischen den Knoten.
+- Auf allen Knoten installierte Cluster-Pakete: `pacemaker`, `corosync`, eine CRM-Shell
+  (`crmsh`), `drbd-utils` und `resource-agents`.
+
+:::caution[Installieren Sie grommunio und übergeben Sie anschließend die Steuerung an das Cluster]
+Installieren Sie grommunio auf **beiden** Datenknoten, lassen Sie jedoch **Pacemaker** die Dienste starten und stoppen
+– diese dürfen nicht zusätzlich unabhängig von systemd gestartet werden. Stellen Sie die
+verwalteten Einheiten auf den für Ihr Betriebsmodell geeigneten Zustand `enabled`/`disabled` ein,
+damit sich die beiden Ebenen nicht um die Dienste streiten.
+:::
+
+## Cluster-Stack: Corosync & Pacemaker
+
+Corosync (`/etc/corosync/corosync.conf`) definiert den Clusternamen und die drei
+Mitgliedsknoten; Pacemaker verwaltet die Ressourcen auf dieser Ebene.
+
+Für diesen Entwurf sind einige clusterweite Eigenschaften von Bedeutung:
+
+- **Quorum** mit drei Knoten toleriert den Ausfall eines beliebigen Knotens (einschließlich des
+  Witness) ohne Verlust des Quorums.
+- Der Witness wird dienstfrei gehalten, wobei **Standortbeschränkungen** gelten, die den
+  VIP, das `/grodata`-Mount und die Dienstgruppe mit `-inf` auf einer Skala von `node3` bewerten.
+
+:::danger[Fencing für die Produktion konfigurieren]
+In der Beispielkonfiguration wird der Einfachheit halber `stonith-enabled=false` gesetzt. Ein HA-Cluster in der Produktion
+**muss** über ein funktionierendes **STONITH/Fencing** verfügen; ohne dieses kann es bei einem Split-Brain-Zustand
+dazu kommen, dass DRBD auf beiden Knoten hochgefahren wird, was zu Datenverlusten führt. Konfigurieren Sie vor der Inbetriebnahme ein Fencing-Gerät
+(IPMI/iLO/iDRAC, eine PDU oder ein SBD mit Watchdog).
+:::
+
+## Speicher: DRBD und `/grodata`
+
+### DRBD-Ressource
+
+Eine einzelne DRBD-Ressource (`grodata`, Gerät `/dev/drbd0`) repliziert die zugrunde liegende
+Festplatte zwischen den beiden Datenknoten. Nach der anfänglichen vollständigen Synchronisierung wird DRBD
+an Pacemaker übergeben, das sie als **promotable clone** (`clone-max=2`,
+`promoted-max=1`) verwaltet, sodass jeweils genau ein Knoten als Primärknoten fungiert.
+
+```bash
+# Inspect replication state before and after any change
+drbdadm status
+cat /proc/drbd
+```
+
+:::tip[Replikationsprotokoll]
+Das Protokoll **C** (synchron) bietet die höchste Datensicherheit. Wenn Sie
+auf das Protokoll **B** umstellen möchten, tun Sie dies erst **nach** Abschluss der
+anfänglichen Synchronisierung, bei dokumentiertem Synchronisierungsstatus und innerhalb eines kontrollierten Wartungsfensters
+– wobei Sie zunächst `drbdadm status`, `cat /proc/drbd` sowie den Status der Pacemaker-Ressource
+zu überprüfen.
+:::
+
+### Das Konzept des Einbindens und des Bind-Mounts
+
+Auf dem aktiven Knoten wird `/dev/drbd0` unter `/grodata` als XFS-Volume eingebunden. Das Datenverzeichnis jedes Dienstes
+wird dann von `/grodata` über einen **Bind-Mount** auf seinen Standardpfad
+`/var/lib/*`-Pfad **bind-gemountet**, sodass die persistenten Daten bei einem Failover dem DRBD-Volume folgen.
+
+| Quelle unter `/grodata` | Ziel der Bind-Mount-Zuordnung | Zweck |
+| --- | --- | --- |
+| `/grodata/mysql` | `/var/lib/mysql` | MariaDB-Datenverzeichnis |
+| `/grodata/redis` | `/var/lib/redis` | Redis-Persistenz |
+| `/grodata/gromox` | `/var/lib/gromox` | Gromox-E-Mail-Speicher / Speicherdaten |
+| `/grodata/grommunio-web` | `/var/lib/grommunio-web` | Webdaten, Sitzungen, Index |
+| `/grodata/grommunio-antispam` | `/var/lib/grommunio-antispam` | Antispam-Daten |
+| `/grodata/grommunio-dav` | `/var/lib/grommunio-dav` | DAV-Daten |
+| `/grodata/grommunio-admin-api` | `/var/lib/grommunio-admin-api` | Admin-API-Daten |
+
+Im Cluster werden die Bind-Mounts als `Filesystem`-Primitive mit
+`fstype=none` und `options=bind` modelliert, die in einer Gruppe (`grodata_binds`) zusammengefasst sind, sodass sie
+alle dem Mount DRBD folgen.
+
+## Ressourcen zu Pacemaker
+
+### Zusammenfassung der Ressourcen
+
+| Ressource | Agent | Rolle |
+| --- | --- | --- |
+| `groCluster` | `ocf:heartbeat:IPaddr2` | Der „floating VIP“ |
+| `ms_grodata` | `ocf:linbit:drbd` (erweiterbar) | DRBD primär/sekundär |
+| `grodata_mount` | `ocf:heartbeat:Filesystem` | XFS-Einbindung von `/dev/drbd0` unter `/grodata` |
+| `grodata_binds` | Gruppe von `Filesystem` (Bind) | Die sieben Bind-Mounts |
+| `grommunio_svc` | Gruppe von `systemd:*` | Der geordnete grommunio/Gromox-Dienststapel |
+
+### Reihenfolge des Dienststarts (`grommunio_svc`)
+
+Die Servicegruppe wird (und wird im umgekehrten Reihenfolge beendet) in einer festgelegten Reihenfolge gestartet, sodass
+die Abhängigkeiten zuerst aufgerufen werden:
+
+| # | Ressource | Einheit |
+| --- | --- | --- |
+| 1 | `mariadb` | `systemd:mariadb` |
+| 2 | `redis-grommunio` | `systemd:redis@grommunio.service` |
+| 3 | `php-fpm` | `systemd:php-fpm` |
+| 4 | `gromox-http` | `systemd:gromox-http` |
+| 5 | `gromox-midb` | `systemd:gromox-midb` |
+| 6 | `gromox-zcore` | `systemd:gromox-zcore` |
+| 7 | `gromox-event` | `systemd:gromox-event` |
+| 8 | `gromox-timer` | `systemd:gromox-timer` |
+| 9 | `gromox-imap` | `systemd:gromox-imap` |
+| 10 | `gromox-pop3` | `systemd:gromox-pop3` |
+| 11 | `gromox-delivery-queue` | `systemd:gromox-delivery-queue` |
+| 12 | `gromox-delivery` | `systemd:gromox-delivery` |
+| 13 | `grommunio-antispam` | `systemd:grommunio-antispam` |
+| 14 | `grommunio-admin-api` | `systemd:grommunio-admin-api` |
+| 15 | `nginx` | `systemd:nginx` |
+
+### Bestellung und Colocation
+
+Die Einschränkungen erzwingen eine logische Abfolge — **DRBD hochfahren → `/grodata` einbinden →
+die Bind-Mounts bereitstellen → den VIP aktivieren → die Dienste starten** — und sorgen dafür, dass
+alles auf dem primären DRBD-Knoten untergebracht bleibt:
+
+| Einschränkung | Auswirkung |
+| --- | --- |
+| `drbd_before_grodata` | `ms_grodata` muss vor dem Start von `grodata_mount` bereitgestellt werden |
+| `grodata_before_binds` | `/grodata` wird vor den Bind-Mounts eingebunden |
+| `binds_before_grommunio_svc` | Bind-Mounts starten vor den Diensten |
+| `grodata_before_ip` / `ip_before_grommunio_svc` | Die VIP ist an den `/grodata`-Stack gebunden und startet vor `grommunio_svc` |
+| `grodata_on_drbd` (Colocation) | `/grodata` läuft auf dem zum DRBD beförderten Knoten |
+| `grommunio_svc_on_*` (Colocation) | Dienste laufen zusammen mit dem VIP, `/grodata` und den Bind-Mounts |
+| `no_*_on_witness` (Standort, `-inf`) | Der VIP, die Mounts und die Dienste sind vom Witness ausgeschlossen |
+
+Die vollständige Konfiguration finden Sie im [Beispiel unten](#example-configuration).
+
+## Postfix (MTA)
+
+In diesem Zusammenhang läuft **Postfix unter systemd und ist *keine* Cluster-Ressource**
+— es wird auf jedem Knoten separat konfiguriert. Postfix lässt sich über
+MySQL-Lookup-Maps und einen Milter in grommunio integrieren:
+
+| Parameter | Beispielwert / Pfad |
+| --- | --- |
+| `myhostname` | `grommunio.example.com` |
+| `virtual_mailbox_domains` | `mysql:/etc/postfix/grommunio-virtual-mailbox-domains.cf` |
+| `virtual_mailbox_maps` | `mysql:/etc/postfix/grommunio-virtual-mailbox-maps.cf` |
+| `virtual_alias_maps` | `mysql:/etc/postfix/grommunio-virtual-mailbox-alias-maps.cf` |
+| `recipient_bcc_maps` | `mysql:/etc/postfix/grommunio-bcc-forwards.cf` |
+| `virtual_transport` | `smtp:[::1]:24` |
+| `smtpd_milters` | `inet:localhost:11332` (wenn grommunio-Antispam aktiv ist) |
+
+Sie können Postfix auf eine der drei unterstützten Arten ausführen; wählen Sie die für Ihr Betriebsmodell
+geeignete aus:
+
+- **Nur systemd auf jedem Knoten** (wie oben). Ein Standby-Knoten kann weiterhin lokale
+  System-E-Mails versenden, auch wenn er keine aktive Postfix-Rolle innehat.
+- **Als Pacemaker-Ressource**, die der HA-Gruppe hinzugefügt wurde, sodass sie zusammen mit dem
+  Rest des Stacks ein Fallback durchführt.
+- **Als Klon**, der gleichzeitig auf beiden Knoten läuft.
+
+Nach jeder Änderung sollten Sie die Dokumentation mit `postconf -n` vom Live-
+Host abgleichen.
+
+## Betriebshandbuch
+
+### Status- und Zustandsprüfungen
+
+```bash
+# Cluster
+crm_mon -1
+crm status
+crm configure show
+
+# Floating IP
+ip a | grep 10.0.0.10
+crm resource status groCluster
+
+# DRBD and the mount
+drbdadm status
+cat /proc/drbd
+mount | grep /grodata
+df -h /grodata
+
+# Services and logs
+systemctl --failed
+journalctl -u corosync -u pacemaker
+journalctl -fu gromox-http
+journalctl -fu grommunio-admin-api
+```
+
+### Ressourcen bereinigen und neu starten
+
+```bash
+# Clear failure state (all resources, or a single one)
+crm resource cleanup
+crm resource cleanup <RESOURCE>
+
+# Restart an individual service
+crm resource restart gromox-http
+crm resource restart grommunio-admin-api
+crm resource restart nginx
+```
+
+### Knoten im Standby-Modus / online
+
+```bash
+crm node standby node1     # take a node out of resource placement
+crm node online  node1     # make it eligible again
+crm node online  node2     # keep the secondary ready for failover
+```
+
+### Geplantes Failover
+
+1. Überprüfen Sie den Zustand des Clusters: `crm_mon -1` – Quorum vorhanden, keine ausgefallenen Ressourcen.
+2. Stellen Sie sicher, dass der Zielknoten online ist und sich nicht im Standby-Modus befindet (`crm node online node2`).
+3. Überprüfen Sie den Synchronisierungsstatus von DRBD: `drbdadm status` und `cat /proc/drbd`.
+4. Den aktiven Knoten in den Standby-Modus versetzen oder die Ressourcen
+   kontrolliert auf den Zielknoten verschieben.
+5. Auf dem Zielknoten bestätigen: DRBD hochgestuft, `/grodata` eingebunden, Bind-Mounts
+   aktiv, VIP aktiv, Dienste gestartet.
+6. Überprüfen Sie die Anwendungsseite: Web-Anmeldung, Admin API, IMAP/SMTP, E-Mail-Warteschlange.
+
+### Postfix-Vorgänge
+
+```bash
+postconf -n
+systemctl status postfix
+journalctl -fu postfix
+mailq
+postqueue -f
+postsuper -d ALL        # flush the queue — only with operational sign-off
+```
+
+## Sicherung und Wiederherstellung
+
+:::danger[DRBD ist eine Replikation, keine Datensicherung]
+DRBD repliziert jede Änderung originalgetreu – einschließlich versehentlicher Löschungen und
+Datenbeschädigungen. Sie **benötigen zusätzlich zum Cluster eine unabhängige Datensicherungsstrategie**.
+:::
+
+**Zu sichernde Konfiguration:** `/etc/corosync/*`; das Pacemaker CIB
+(`crm configure show > cib.txt`, optional `cibadmin --query > cib.xml`);
+`/etc/drbd.d/*`; `/etc/fstab` und das `/grodata`-Mount-Layout; `/etc/gromox/*`;
+`/etc/grommunio-common/*` (einschließlich TLS-Material); `/etc/grommunio-admin-api/*`;
+`/etc/nginx/*`; die PHP/php-fpm-Konfiguration; `/etc/postfix/*`; sowie Host-/Netzwerk-
+Dateien (`/etc/hosts`, `/etc/hostname`, NetworkManager-Verbindungen, `sshd_config`).
+
+**Zu sichernde Daten:** konsistente MariaDB-Dumps und/oder physische Backups von
+`/grodata/mysql`; ein Backup auf Dateiebene von `/grodata/gromox`; die verbleibenden
+`/grodata/*` Unterverzeichnisse (web, redis, dav, admin-api, antispam); TLS-
+Zertifikate und private Schlüssel (mit separater Zugriffskontrolle); sowie die Geheimnisse
+aus Ihrem Passwort-/Geheimnis-Manager.
+
+**Wiederherstellungsprinzip:** Einen Knoten mit identischer Betriebssystem- und Paketbasis bereitstellen,
+die Konfiguration des DRBD und die zugehörige Festplatte wiederherstellen (bzw. neu initialisieren), die
+Konfiguration aus dem Backup wiederherstellen, die Daten unter `/grodata` wiederherstellen und die
+Bind-Mounts, starten Sie MariaDB konsistent und überprüfen Sie die grommunio/Postfix-Zuordnungen,
+aktivieren Sie anschließend die Cluster-Ressourcen in einer kontrollierten Reihenfolge und führen Sie Abnahmetests
+durch.
+
+## Sicherheit und Absicherung
+
+- Konfigurieren Sie **STONITH/Fencing** (siehe den oben genannten Hinweis) vor dem Einsatz in der Produktion.
+- Verwalten Sie **TLS-Privatschlüssel** (`/etc/grommunio-common/ssl/server.key`) und das
+  Zertifikatsbündel mit restriktiven Dateiberechtigungen.
+- Bewahren Sie **Geheimnisse** (Datenbank-Anmeldedaten usw.) in einem Secret Manager auf – niemals in
+  der Dokumentation oder einem Repository.
+- Sichern Sie SSH und beschränken Sie den Cluster-/Replikationsverkehr auf ein vertrauenswürdiges Netzwerk.
+
+## Beispielkonfiguration
+
+Eine generische `crm configure show`-Konfiguration für die oben beschriebene Architektur. Passen Sie die Knotennamen,
+die VIP, die Netzwerkkarte und Ihre spezifischen DRBD-/Fencing-Einstellungen an; dies ist ein Beispiel als
+Ausgangspunkt, keine fertige Lösung.
+
+```bash
+node 1: node1 attributes standby=off
+node 2: node2 attributes standby=off
+node 3: node3 attributes standby=off
+
+primitive groCluster IPaddr2 \
+    params ip=10.0.0.10 cidr_netmask=24 nic=eth0 \
+    op monitor interval=15s
+
+primitive grodata ocf:linbit:drbd \
+    params drbd_resource=grodata \
+    op monitor interval=15s role=Promoted \
+    op monitor interval=30s role=Unpromoted
+
+primitive grodata_mount Filesystem \
+    params device="/dev/drbd0" directory="/grodata" fstype=xfs \
+    op monitor interval=20s
+
+# One bind-mount primitive per service data directory (fstype=none, options=bind)
+primitive grodata_mount_bind_mysql Filesystem \
+    params device="/grodata/mysql" directory="/var/lib/mysql" fstype=none options=bind \
+    op monitor interval=20s timeout=40s
+primitive grodata_mount_bind_redis Filesystem \
+    params device="/grodata/redis" directory="/var/lib/redis" fstype=none options=bind \
+    op monitor interval=20s timeout=40s
+primitive grodata_mount_bind_gromox Filesystem \
+    params device="/grodata/gromox" directory="/var/lib/gromox" fstype=none options=bind \
+    op monitor interval=20s timeout=40s
+primitive grodata_mount_bind_grommunio_web Filesystem \
+    params device="/grodata/grommunio-web" directory="/var/lib/grommunio-web" fstype=none options=bind \
+    op monitor interval=20s timeout=40s
+primitive grodata_mount_bind_grommunio_antispam Filesystem \
+    params device="/grodata/grommunio-antispam" directory="/var/lib/grommunio-antispam" fstype=none options=bind \
+    op monitor interval=20s timeout=40s
+primitive grodata_mount_bind_grommunio_dav Filesystem \
+    params device="/grodata/grommunio-dav" directory="/var/lib/grommunio-dav" fstype=none options=bind \
+    op monitor interval=20s timeout=40s
+primitive grodata_mount_bind_grommunio_admin_api Filesystem \
+    params device="/grodata/grommunio-admin-api" directory="/var/lib/grommunio-admin-api" fstype=none options=bind \
+    op monitor interval=20s timeout=40s
+
+# Service primitives (one per unit; same op timeouts) — see the start-order table
+primitive mariadb systemd:mariadb \
+    op monitor interval=30s timeout=30s \
+    op start interval=0s timeout=60s \
+    op stop interval=0s timeout=60s
+# … redis-grommunio, php-fpm, gromox-http, gromox-midb, gromox-zcore, gromox-event,
+#    gromox-timer, gromox-imap, gromox-pop3, gromox-delivery-queue, gromox-delivery,
+#    grommunio-antispam, grommunio-admin-api, nginx (identical pattern)
+
+group grodata_binds \
+    grodata_mount_bind_mysql grodata_mount_bind_redis grodata_mount_bind_gromox \
+    grodata_mount_bind_grommunio_web grodata_mount_bind_grommunio_antispam \
+    grodata_mount_bind_grommunio_dav grodata_mount_bind_grommunio_admin_api
+
+group grommunio_svc \
+    mariadb redis-grommunio php-fpm gromox-http gromox-midb gromox-zcore \
+    gromox-event gromox-timer gromox-imap gromox-pop3 gromox-delivery-queue \
+    gromox-delivery grommunio-antispam grommunio-admin-api nginx
+
+clone ms_grodata grodata \
+    meta promoted-max=1 promoted-node-max=1 clone-max=2 clone-node-max=1 \
+         notify=true promotable=true interleave=true
+
+# Ordering: promote DRBD → mount → binds → VIP → services
+order drbd_before_grodata          Mandatory: ms_grodata:promote grodata_mount:start
+order grodata_before_binds         Mandatory: grodata_mount:start grodata_binds:start
+order grodata_before_ip            Mandatory: grodata_mount groCluster
+order binds_before_grommunio_svc   Mandatory: grodata_binds:start grommunio_svc:start
+order ip_before_grommunio_svc      Mandatory: groCluster:start grommunio_svc:start
+
+# Colocation: keep the whole stack on the DRBD-primary node
+colocation grodata_on_drbd         inf: grodata_mount ms_grodata:Promoted
+colocation grodata_binds_on_grodata inf: grodata_binds grodata_mount
+colocation clusterip_on_grodata    inf: groCluster grodata_mount
+colocation grommunio_svc_on_grodata inf: grommunio_svc grodata_mount
+colocation grommunio_svc_on_binds  inf: grommunio_svc grodata_binds
+colocation grommunio_svc_on_ip     inf: grommunio_svc groCluster
+
+# Keep data and services off the witness node
+location no_grodata_on_witness    groCluster    -inf: node3
+location no_mount_on_witness      grodata_mount -inf: node3
+location no_grommunio_on_witness  grommunio_svc -inf: node3
+
+property cib-bootstrap-options: \
+    have-watchdog=false \
+    cluster-infrastructure=corosync \
+    cluster-name=grommuniocluster \
+    stonith-enabled=false
+rsc_defaults build-resource-defaults: \
+    resource-stickiness=1
+```
+
+:::caution
+`stonith-enabled=false` wird nur angezeigt, um das Beispiel kurz zu halten. **Aktivieren Sie
+die Fencing-Funktion vor dem Einsatz in der Produktion.**
+:::

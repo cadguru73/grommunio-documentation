@@ -1,0 +1,72 @@
+---
+title: Command-line administration
+description: Manage grommunio from the shell — the high-level grommunio-admin CLI for users, domains and configuration, and the low-level gromox-* utilities for mailbox and store operations.
+sidebar:
+  label: Overview
+  order: 0
+---
+
+Almost everything you can do in the **grommunio Admin UI** — and a good deal
+more — can be driven from the shell on the grommunio server. The command line is
+the fastest way to perform bulk changes, script recurring jobs, and reach
+low-level mailbox operations that have no UI equivalent.
+
+There are two families of tools, and it helps to know which layer you are
+working at.
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard
+    title="grommunio-admin"
+    href="/cli/grommunio-admin/"
+    description="The high-level management CLI. Create and modify users, domains, organizations and mailing lists; configure LDAP/AD and fetchmail; manage passwords, services and configuration. Operates on the same data as the Admin UI / REST API."
+  />
+  <LinkCard
+    title="Gromox CLI utilities"
+    href="/cli/gromox-tools/"
+    description="The low-level tools that act directly on stores and mailboxes — gromox-mbop (mailbox operations), store creation, check/repair, sizing, snapshots and import/export. Use these for maintenance and data-level tasks."
+  />
+</CardGrid>
+
+## Which tool do I reach for?
+
+| You want to … | Use |
+| --- | --- |
+| Create / modify / delete a user or domain | [`grommunio-admin user`](/cli/grommunio-admin/user/), [`grommunio-admin domain`](/cli/grommunio-admin/domain/) |
+| Set or reset a password | [`grommunio-admin passwd`](/cli/grommunio-admin/passwd/) |
+| Connect / synchronize an LDAP or Active Directory | [`grommunio-admin ldap`](/cli/grommunio-admin/ldap/) |
+| Pull mail from a remote mailbox | [`grommunio-admin fetchmail`](/cli/grommunio-admin/fetchmail/) |
+| Empty a folder, delete messages, purge soft-deleted items | [`gromox-mbop`](/cli/gromox-tools/#gromox-mbop) |
+| Reclaim disk space in a store | [`gromox-mbop`](/cli/gromox-tools/#gromox-mbop) (`vacuum`, `purge-datafiles`) |
+| Check or repair a mailbox | [`gromox-mbck`](/cli/gromox-tools/#gromox-mbck) |
+| Report a mailbox's size | [`gromox-mbsize`](/cli/gromox-tools/#gromox-mbsize) |
+| Run a one-off action across *all* mailboxes | [`gromox-mbop foreach.*`](/cli/gromox-tools/#run-an-action-across-every-mailbox) |
+
+:::tip[New here? Start with the cookbook]
+The **[Common administration tasks](/cli/cookbook/)** page collects ready-to-use
+recipes for the jobs administrators run most often — onboarding users, LDAP
+synchronization, mailbox clean-up, fetchmail and backups.
+:::
+
+## Conventions
+
+Run these commands on the grommunio server, as `root` (or with `sudo`). A few
+conventions recur throughout the reference:
+
+- **`USERSPEC` / `MBSPEC`** — a user is identified by e-mail address
+  (`jdoe@example.com`); some commands also accept a numeric ID.
+- **`grommunio-admin <area> <action>`** — the management CLI is organized into
+  areas (`user`, `domain`, `ldap`, …), each with its own actions
+  (`create`, `modify`, `list`, `delete`, …). Append `--help` at any level.
+- **`gromox-mbop -u <mailbox> <action>`** — the mailbox-operations tool always
+  takes the target mailbox with `-u`, followed by one or more actions.
+- Destructive commands are flagged with a caution admonition — read those
+  before running them in production.
+
+## Offline reading
+
+This section is also available to download for offline use:
+
+- [Download as PDF](/pdf/grommunio-cli.pdf)
+- [Download as EPUB](/epub/grommunio-cli.epub)

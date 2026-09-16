@@ -1,0 +1,140 @@
+---
+/**
+ * Language switcher, styled after the one on grommunio.com: a rounded pill with
+ * the current language's flag, opening a dropdown of flag + label entries.
+ * Overrides Starlight's default <select>-based LanguageSelect.
+ * Flags are inlined at build time (astro-icon + circle-flags) — CSP-safe.
+ */
+import config from 'virtual:starlight/user-config';
+import { Icon } from 'astro-icon/components';
+import { LOCALES } from '../i18n/locales.mjs';
+import { isSingleLocaleRoute } from '../i18n/single-locale-routes.mjs';
+
+const locales = config.locales ?? {};
+const codes = Object.keys(locales);
+const nonRoot = codes.filter((c) => c !== 'root');
+const flagOf = (code: string) => LOCALES[code === 'root' ? 'en' : code]?.flag ?? 'gb';
+
+// Equivalent of the current page in another locale (strip any locale prefix, add the target's).
+const stripRe = nonRoot.length ? new RegExp(`^/(?:${nonRoot.join('|')})(?=/|$)`) : null;
+const base = (stripRe ? Astro.url.pathname.replace(stripRe, '') : Astro.url.pathname) || '/';
+// Pages that exist in the default locale only (the generated API reference)
+// have no localized counterpart to switch to, so blindly prefixing the path
+// would offer a 404. Point those entries at the language's home page instead —
+// the switcher keeps working, it just cannot land on the same page.
+const singleLocale = isSingleLocaleRoute(base);
+const pathFor = (code: string) =>
+  code === 'root' ? base : singleLocale ? `/${code}/` : `/${code}${base === '/' ? '/' : base}`;
+
+const currentCode = Astro.locals.starlightRoute.locale ?? 'root';
+const entries = Object.entries(locales).map(([code, l]) => ({
+  code,
+  label: l?.label ?? code,
+  lang: l?.lang ?? code,
+  flag: flagOf(code),
+  href: pathFor(code),
+  current: code === currentCode,
+}));
+const cur = entries.find((e) => e.current) ?? entries[0];
+---
+
+{
+  config.isMultilingual && (
+    <starlight-lang-select>
+      <details class="gx-lang">
+        <summary aria-label={Astro.locals.t('languageSelect.accessibleLabel')}>
+          <Icon name={`circle-flags:${cur.flag}`} class="gx-lang__flag" />
+          <span class="gx-lang__label">{cur.label}</span>
+          <Icon name="lucide:chevron-down" class="gx-lang__chevron" />
+        </summary>
+        <ul role="listbox">
+          {entries.map((e) => (
+            <li>
+              <a
+                href={e.href}
+                hreflang={e.lang}
+                lang={e.lang}
+                aria-current={e.current ? 'true' : undefined}
+                class={e.current ? 'is-current' : undefined}
+              >
+                <Icon name={`circle-flags:${e.flag}`} class="gx-lang__flag" />
+                <span class="gx-lang__name">{e.label}</span>
+                {e.current && <Icon name="lucide:check" class="gx-lang__check" />}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </details>
+    </starlight-lang-select>
+  )
+}
+
+<style>
+  .gx-lang { position: relative; }
+  .gx-lang > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    list-style: none;
+    padding: 0.3rem 0.6rem;
+    border-radius: 999px;
+    font-size: var(--sl-text-sm);
+    font-weight: 500;
+    color: var(--sl-color-gray-1);
+    border: 1px solid var(--sl-color-hairline-light);
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .gx-lang > summary::-webkit-details-marker { display: none; }
+  .gx-lang > summary:hover { color: var(--sl-color-white); border-color: var(--sl-color-gray-4); }
+  .gx-lang__flag { width: 1.25rem; height: 1.25rem; border-radius: 999px; flex-shrink: 0; }
+  .gx-lang__label { white-space: nowrap; }
+  .gx-lang__chevron { width: 1rem; height: 1rem; opacity: 0.7; transition: transform 0.2s; }
+  .gx-lang[open] > summary .gx-lang__chevron { transform: rotate(180deg); }
+
+  .gx-lang ul {
+    position: absolute;
+    right: 0;
+    margin-top: 0.5rem;
+    min-width: 11rem;
+    max-height: 70vh;
+    overflow: auto;
+    list-style: none;
+    padding: 0.35rem;
+    border-radius: 0.85rem;
+    border: 1px solid var(--sl-color-hairline-light);
+    background: var(--sl-color-bg-nav, var(--sl-color-bg));
+    box-shadow: 0 10px 30px -10px rgb(0 0 0 / 0.4);
+    z-index: 50;
+  }
+  .gx-lang li { margin: 0; }
+  .gx-lang ul a {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.45rem 0.6rem;
+    border-radius: 0.6rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-1);
+    text-decoration: none;
+    transition: background 0.15s, color 0.15s;
+  }
+  .gx-lang ul a:hover { background: var(--sl-color-gray-6); color: var(--sl-color-white); }
+  .gx-lang ul a.is-current { background: color-mix(in srgb, var(--gx-azure-500, #1f7fe5) 16%, transparent); color: var(--sl-color-white); }
+  .gx-lang__name { flex: 1; }
+  .gx-lang__check { width: 1rem; height: 1rem; color: var(--gx-azure-400, #4aa3f0); }
+</style>
+
+<script>
+  // Close the dropdown on outside click / Escape. Bound once across view transitions.
+  const w = window as Window & { __gxLangBound?: boolean };
+  if (!w.__gxLangBound) {
+    w.__gxLangBound = true;
+    const closeAll = (except: Element | null = null) =>
+      document.querySelectorAll<HTMLDetailsElement>('.gx-lang[open]').forEach((d) => { if (d !== except) d.open = false; });
+    document.addEventListener('click', (e) => {
+      closeAll(e.target instanceof Element ? e.target.closest('.gx-lang') : null);
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAll(); });
+  }
+</script>

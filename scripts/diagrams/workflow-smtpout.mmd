@@ -1,0 +1,11 @@
+flowchart TD
+  sub(["Local submission"])
+  postfix["postfix · MTA"]:::ext
+  net(["Internet"]):::ext
+  queue["gromox-delivery-queue"]
+  AS["grommunio-antispam<br/>━━━━━━━━━━━━━━<br/>DKIM / ARC signing<br/>spam score · policy<br/>anti-virus (ClamAV)<br/>rate limit"]:::security
+
+  sub -->|1 · submit| postfix
+  postfix <-->|2 · milter check / signing| AS
+  postfix -->|3 · external| net
+  postfix -->|3 · internal| queue

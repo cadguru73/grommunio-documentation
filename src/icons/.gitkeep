@@ -1,0 +1,2 @@
+# Local SVG icons for astro-icon (`<Icon name="local-name" />`). astro-icon 1.2
+# warns when this directory is missing; the site currently only uses iconify sets.

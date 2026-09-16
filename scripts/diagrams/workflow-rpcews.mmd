@@ -1,0 +1,14 @@
+flowchart TD
+  client(["Outlook / MAPI client"])
+  nginx["nginx"]:::ext
+  ad["gromox-http<br/>(AutoDiscover)"]
+  emsmdb["gromox-http<br/>(emsmdb)"]
+  ews["gromox-http<br/>(EWS)"]
+  exmdb["gromox-http (exmdb)"]
+
+  client --> nginx
+  nginx -->|AutoDiscover| ad
+  nginx -->|RPC/HTTP · MAPI/HTTP| emsmdb
+  nginx -->|EWS| ews
+  emsmdb --> exmdb
+  ews --> exmdb

@@ -1,0 +1,13 @@
+# grommunio documentation — https://docs.grommunio.com
+#
+# The whole site is public reference material and should be indexed. The only
+# exclusions are Astro's build assets and Pagefind's search index shards, which
+# are machine-readable fragments with no standalone value in search results.
+
+User-agent: *
+Allow: /
+Disallow: /_astro/
+Disallow: /pagefind/
+
+# @astrojs/sitemap emits this on every build (see astro.config.mjs → site).
+Sitemap: https://docs.grommunio.com/sitemap-index.xml

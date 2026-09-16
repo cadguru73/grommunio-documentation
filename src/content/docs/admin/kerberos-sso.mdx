@@ -1,0 +1,207 @@
+---
+title: Kerberos single sign-on (SPNEGO)
+description: Configure Kerberos 5 / SPNEGO ("Negotiate") authentication so domain-joined Windows clients such as Outlook sign in to grommunio transparently — via an Active Directory service account, SPNs, a keytab and Gromox's HTTP SPNEGO support.
+sidebar:
+  label: Kerberos SSO
+  order: 78
+---
+
+With Kerberos single sign-on, domain-joined Windows clients — Outlook in
+particular — authenticate to grommunio **transparently**, without a password
+prompt. Gromox's HTTP service accepts Kerberos tickets via **SPNEGO**
+("Negotiate"), validated against an Active Directory KDC using a dedicated
+service account, its **Service Principal Names (SPNs)** and an exported
+**keytab**.
+
+:::note[Example values]
+The walkthrough uses lab values — realm `TESTDOM.LOCAL` (DNS domain
+`testdom.local`), grommunio host `gromm1`, domain controller `dc1`, and the
+service account `gromox`. Replace them with your own throughout.
+:::
+
+:::tip[Browser-based single sign-on]
+Kerberos covers domain-joined Windows clients. For single sign-on in the browser (grommunio Web, Chat, Meet, Files) with OpenID Connect and multi-factor authentication, see [Single sign-on with grommunio-auth and Keycloak](/guides/sso-keycloak/). Both can be used side by side.
+:::
+
+## Before you start
+
+- An Active Directory domain with a reachable domain controller (the KDC).
+- A grommunio server whose HTTP service will accept Kerberos tickets for an
+  `HTTP/…` SPN.
+- Administrative access to the DC (to create the account, register SPNs and
+  export a keytab).
+
+## 1. Synchronize time
+
+Kerberos does **not tolerate a clock skew of more than 5 minutes**. Synchronize
+the grommunio server and the domain controller against the same time source
+(e.g. with `chronyd`) before anything else.
+
+## 2. Create the service account in Active Directory
+
+On the domain controller, create a user account that represents the HTTP service
+(here: `gromox`). On its **Account** tab, set the user logon name to the
+service's SPN (`HTTP/gromm1.testdom.local`) in the domain realm, and enable
+**Password never expires**.
+
+![Active Directory account properties: the gromox service account's logon name set to HTTP/gromm1.testdom.local with "password never expires" enabled.](/img/kerberos/ad-account.png)
+
+In **Account options**, enable both **"This account supports Kerberos AES
+128-bit encryption"** and **"…AES 256-bit encryption"**.
+
+![Account options with the Kerberos AES 128-bit and 256-bit encryption checkboxes enabled.](/img/kerberos/ad-encryption.png)
+
+On the **Delegation** tab, select **"Trust this user for delegation to any
+service (Kerberos only)"**.
+
+![Delegation tab with "Trust this user for delegation to any service (Kerberos only)" selected.](/img/kerberos/ad-delegation.png)
+
+## 3. Register the SPNs
+
+Still on the domain controller, register the service principal names against the
+account. The `HTTP/<host>` and `HTTP/autodiscover.<domain>` SPNs are the
+essential pieces:
+
+```powershell
+setspn -S HTTP/gromm1.testdom.local@TESTDOM.LOCAL gromox
+setspn -S HTTP/autodiscover.testdom.local gromox
+```
+
+Verify (and, if needed, remove) the registered SPNs:
+
+```powershell
+setspn -L gromox            # list the account's SPNs
+setspn -D <SPN> gromox      # delete an SPN
+```
+
+![Output of "setspn -L gromox" listing the registered HTTP SPNs for the account.](/img/kerberos/setspn-list.png)
+
+## 4. Export the keytab
+
+Export a Kerberos keytab that maps the SPN to the service account, using
+AES256-SHA1:
+
+```powershell
+ktpass.exe -princ HTTP/gromm1.testdom.local@TESTDOM.LOCAL ^
+  -mapUser gromox@TESTDOM.LOCAL -pass <PASSWORD> ^
+  -ptype KRB5_NT_PRINCIPAL -crypto AES256-SHA1 -out C:\Temp\krb5.keytab
+```
+
+:::tip[Pin the key version number]
+You can fix the key version number with `-kvno` (e.g. `-kvno 51`). It must match
+the KVNO the keytab reports on the grommunio server (see
+[Verification](#verification--troubleshooting)).
+:::
+
+## 5. Copy the keytab to the grommunio server
+
+Transfer `krb5.keytab` to the grommunio server as `/etc/krb5.keytab` (e.g. with
+WinSCP or `scp`). Give it restrictive permissions — it contains the service
+account's key material:
+
+```bash
+chown root:root /etc/krb5.keytab
+chmod 600 /etc/krb5.keytab
+```
+
+## 6. Configure Kerberos on the server
+
+Edit `/etc/krb5.conf`:
+
+```ini
+[libdefaults]
+    default_realm = TESTDOM.LOCAL
+    default_tgs_enctypes = aes256-sha1 aes128-sha1
+    default_tkt_enctypes = aes256-sha1 aes128-sha1
+
+[realms]
+    TESTDOM.LOCAL = {
+        kdc = dc1.TESTDOM.LOCAL
+        admin_server = dc1.TESTDOM.LOCAL
+        default_domain = TESTDOM.LOCAL
+    }
+
+[domain_realm]
+    .testdom.local = TESTDOM.LOCAL
+    testdom = TESTDOM.LOCAL
+```
+
+## 7. Enable SPNEGO in Gromox
+
+Edit `/etc/gromox/http.cfg` and add:
+
+```ini
+http_auth_spnego=yes
+
+## GSS provider — the built-in one is the default:
+#gss_program=internal-gss
+
+## …alternatively, use the Squid GSS helper:
+gss_program=/usr/lib/squid/negotiate_kerberos_auth -s GSS_C_NO_NAME
+
+## verbose logging while testing (remove afterwards):
+http_debug=2
+```
+
+Restart the HTTP service so the changes take effect:
+
+```bash
+systemctl restart gromox-http
+```
+
+## 8. Test from a domain-joined client
+
+1. Log in to a domain-joined Windows PC.
+2. Create a **new Outlook profile**.
+3. Outlook may prompt for credentials **once** on first run — enter them but
+   **do not save the password**.
+4. On subsequent starts, Outlook must **not** prompt for a password.
+5. Open the Outlook **Connection Status** (hold <kbd>Ctrl</kbd> and click the
+   Outlook tray icon → *Connection Status*). The **Authn** column should read
+   **`Nego*`**, confirming Kerberos/Negotiate.
+
+![Outlook connection status with the Authn column showing Nego*, confirming Negotiate/Kerberos authentication.](/img/kerberos/outlook-nego.png)
+
+## Verification & troubleshooting
+
+Inspect the keytab and its key version number — the KVNO must match the
+grommunio server logs:
+
+```bash
+klist -k /etc/krb5.keytab          # list principals + KVNO
+klist -e -k /etc/krb5.keytab       # include encryption types
+# e.g. 51 HTTP/gromm1.testdom.local@TESTDOM.LOCAL (aes256-cts-hmac-sha1-96)
+```
+
+Exercise the Squid GSS helper directly:
+
+```bash
+# Print a Negotiate token for the local host
+/usr/lib/squid/negotiate_kerberos_auth_test $(hostname -f)
+
+# Validate a token against the service principal; paste the token when prompted
+/usr/lib/squid/negotiate_kerberos_auth -s HTTP/gromm1.testdom.local@TESTDOM.LOCAL
+# → OK token=… user=testuser1@TESTDOM.LOCAL group=…
+```
+
+Get a verbose Kerberos trace for a test login:
+
+```bash
+KRB5_TRACE=/dev/stdout kinit -V user@TESTDOM.LOCAL
+```
+
+On a Windows client, you can map an additional realm to a KDC if required:
+
+```powershell
+ksetup /addkdc EXAMPLE.TEST kdc.example.test
+```
+
+## Notes
+
+- The setup works fine with **multiple domain controllers** — just make sure DNS
+  resolves the KDC(s) correctly.
+- The two SPNs — `HTTP/<host>` and `HTTP/autodiscover.<domain>` — are the
+  critical piece; most failures come down to a missing or mistyped SPN, a clock
+  skew over 5 minutes, or a KVNO/enctype mismatch between the keytab and the DC.
+- See also the [authentication overview](/admin/architecture/#authentication)
+  for how Gromox fits Kerberos alongside its other authentication backends.

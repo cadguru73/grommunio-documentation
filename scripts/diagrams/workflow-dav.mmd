@@ -1,0 +1,16 @@
+flowchart TD
+  client(["CalDAV / CardDAV client<br/>iOS · macOS · Thunderbird · Evolution"])
+  nginx["nginx"]:::ext
+  ac["gromox-http<br/>(AutoConfig / well-known)"]
+  dav["grommunio-dav"]
+  phpmapi(["php-mapi"])
+  zcore["gromox-zcore"]
+  exmdb["gromox-http (exmdb)"]
+
+  client -->|AutoConfig| nginx
+  nginx --> ac
+  client -->|CalDAV / CardDAV| nginx
+  nginx -->|DAV| dav
+  dav --> phpmapi
+  phpmapi --> zcore
+  zcore --> exmdb

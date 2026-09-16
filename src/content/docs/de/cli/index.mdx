@@ -1,0 +1,72 @@
+---
+title: "Verwaltung über die Befehlszeile"
+description: "Verwalten Sie grommunio über die Shell – die übergeordneten grommunio-admin- und CLI-Befehle für Benutzer, Domänen und Konfiguration sowie die untergeordneten gromox-*-Dienstprogramme für Postfach- und Speicheroperationen."
+sidebar:
+  label: "Übersicht"
+  order: 0
+---
+
+Fast alles, was Sie in der **grommunio Admin-Benutzeroberfläche** tun können – und noch einiges
+mehr – lässt sich über die Shell auf dem grommunio-Server steuern. Die Befehlszeile ist
+der schnellste Weg, um Massenänderungen durchzuführen, wiederkehrende Aufgaben zu skripten und
+Mailbox-Operationen auf niedriger Ebene auszuführen, für die es keine Entsprechung in der Benutzeroberfläche gibt.
+
+Es gibt zwei Werkzeuggruppen, und es ist hilfreich zu wissen, auf welcher Ebene man
+gerade arbeitet.
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard
+    title="grommunio-admin"
+    href="/cli/grommunio-admin/"
+    description="Die oberste Verwaltungsebene CLI. Anlegen und Bearbeiten von Benutzern, Domänen, Organisationen und Mailinglisten; Konfigurieren von LDAP/AD und fetchmail; Verwalten von Passwörtern, Diensten und Konfigurationen. Arbeitet mit denselben Daten wie die Admin-Benutzeroberfläche / REST API."
+  />
+  <LinkCard
+    title="Gromox CLI Dienstprogramme"
+    href="/cli/gromox-tools/"
+    description="Die Low-Level-Tools, die direkt auf Stores und Postfächer einwirken – gromox-mbop (Postfachoperationen), Store-Erstellung, Überprüfung/Reparatur, Größenanpassung, Snapshots sowie Import/Export. Verwenden Sie diese für Wartungsarbeiten und Aufgaben auf Datenebene."
+  />
+</CardGrid>
+
+## Welches Werkzeug nehme ich?
+
+| Sie möchten … | Verwenden |
+| --- | --- |
+| Einen Benutzer oder eine Domäne anlegen / ändern / löschen | [`grommunio-admin user`](/cli/grommunio-admin/user/), [`grommunio-admin domain`](/cli/grommunio-admin/domain/) |
+| Ein Passwort festlegen oder zurücksetzen | [`grommunio-admin passwd`](/cli/grommunio-admin/passwd/) |
+| Ein LDAP oder Active Directory verbinden / synchronisieren | [`grommunio-admin ldap`](/cli/grommunio-admin/ldap/) |
+| E-Mails aus einem Remote-Postfach abrufen | [`grommunio-admin fetchmail`](/cli/grommunio-admin/fetchmail/) |
+| Einen Ordner leeren, Nachrichten löschen, vorläufig gelöschte Elemente endgültig löschen | [`gromox-mbop`](/cli/gromox-tools/#gromox-mbop) |
+| Speicherplatz in einem Speicher zurückgewinnen | [`gromox-mbop`](/cli/gromox-tools/#gromox-mbop) (`vacuum`, `purge-datafiles`) |
+| Ein Postfach überprüfen oder reparieren | [`gromox-mbck`](/cli/gromox-tools/#gromox-mbck) |
+| Die Größe eines Postfachs melden | [`gromox-mbsize`](/cli/gromox-tools/#gromox-mbsize) |
+| Eine einmalige Aktion für *alle* Postfächer ausführen | [`gromox-mbop foreach.*`](/cli/gromox-tools/#run-an-action-across-every-mailbox) |
+
+:::tip[Neu hier? Beginnen Sie mit dem Kochbuch]
+Die Seite **[Häufige Verwaltungsaufgaben](/cli/cookbook/)** enthält gebrauchsfertige
+Anleitungen für die Aufgaben, die Administratoren am häufigsten ausführen – Benutzeranmeldung, LDAP-
+Synchronisierung, Postfachbereinigung, fetchmail und Backups.
+:::
+
+## Konventionen
+
+Führen Sie diese Befehle auf dem grommunio-Server als `root` (oder mit `sudo`) aus. Einige
+Konventionen tauchen in der gesamten Dokumentation immer wieder auf:
+
+- **`USERSPEC` / `MBSPEC`** — Ein Benutzer wird anhand seiner E-Mail-Adresse
+  (`jdoe@example.com`) identifiziert; einige Befehle akzeptieren auch eine numerische ID.
+- **`grommunio-admin <area> <action>`** — Die Verwaltung CLI ist in
+  Bereiche (`user`, `domain`, `ldap`, …) unterteilt, von denen jeder über eigene Aktionen
+  (`create`, `modify`, `list`, `delete`, …). Fügen Sie `--help` auf jeder Ebene an.
+- **`gromox-mbop -u <mailbox> <action>`** — Das Tool für Postfachoperationen nimmt immer
+  das Zielpostfach mit `-u` entgegen, gefolgt von einer oder mehreren Aktionen.
+- Destruktive Befehle sind mit einem Warnhinweis gekennzeichnet — lesen Sie diese
+  durch, bevor Sie sie in der Produktion ausführen.
+
+## Offline-Lesen
+
+Dieser Abschnitt steht auch zum Herunterladen für die Offline-Nutzung zur Verfügung:
+
+- [Als PDF herunterladen](/pdf/grommunio-cli.pdf)
+- [Als EPUB herunterladen](/epub/grommunio-cli.epub)

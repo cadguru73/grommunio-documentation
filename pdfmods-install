@@ -1,2 +1,0 @@
-#!/bin/sh
-exec zypper in $(perl -e 'print"texlive-$_ " for split/ /,join"",<>' <pdfmods)

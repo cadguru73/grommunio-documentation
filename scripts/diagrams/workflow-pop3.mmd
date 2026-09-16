@@ -1,0 +1,13 @@
+flowchart TD
+  client(["Mail client"])
+  nginx["nginx"]:::ext
+  ac["gromox-http<br/>(AutoConfig)"]
+  pop3["gromox-pop3"]
+  midb["gromox-midb"]
+  exmdb["gromox-http (exmdb)"]
+
+  client -->|AutoConfig| nginx
+  nginx --> ac
+  client -->|POP3| pop3
+  pop3 --> midb
+  midb --> exmdb

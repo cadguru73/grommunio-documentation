@@ -1,0 +1,13 @@
+flowchart TD
+  client(["Devices<br/>iOS · Android · Outlook"])
+  nginx["nginx"]:::ext
+  ad["gromox-http<br/>(AutoDiscover)"]
+  sync["grommunio-sync"]
+  zcore["gromox-zcore"]
+  exmdb["gromox-http (exmdb)"]
+
+  client --> nginx
+  nginx -->|AutoDiscover| ad
+  nginx -->|EAS| sync
+  sync --> zcore
+  zcore --> exmdb

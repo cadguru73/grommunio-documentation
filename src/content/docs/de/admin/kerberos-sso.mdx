@@ -1,0 +1,203 @@
+---
+title: "Kerberos Single Sign-On (SPNEGO)"
+description: "Konfigurieren Sie die Kerberos 5-/SPNEGO-Authentifizierung („Negotiate“), damit domänengebundene Windows-Clients wie Outlook sich transparent bei grommunio anmelden können – über ein Active Directory-Dienstkonto, SPNs, ein Keytab und die Unterstützung von Gromox, HTTP und SPNEGO."
+sidebar:
+  label: Kerberos SSO
+  order: 78
+---
+
+Mit dem Single-Sign-On von Kerberos authentifizieren sich domänengebundene Windows-Clients – insbesondere Outlook –
+**transparent** bei grommunio, ohne dass ein Passwort
+abgefragt wird. Der HTTP-Dienst von Gromox akzeptiert Kerberos-Tickets über **SPNEGO**
+(„Negotiate“) an, die anhand eines dedizierten
+Dienstkontos, seiner **Service Principal Names (SPNs)** und einer exportierten
+**Keytab** gegenüber einem Active Directory-KDC validiert werden.
+
+:::note[Beispielwerte]
+In dieser Anleitung werden Laborwerte verwendet – Realm `TESTDOM.LOCAL` (DNS-Domäne
+`testdom.local`), grommunio-Host `gromm1`, Domänencontroller `dc1` und das
+Dienstkonto `gromox`. Ersetzen Sie diese Werte durchgehend durch Ihre eigenen.
+:::
+
+## Bevor Sie beginnen
+
+- Eine Active Directory-Domäne mit einem erreichbaren Domänencontroller (dem KDC).
+- Ein grommunio-Server, dessen HTTP-Dienst Kerberos-Tickets für ein
+  `HTTP/…` SPN akzeptiert.
+- Administratorrechte auf dem DC (zum Erstellen des Kontos, Registrieren von SPNs und
+  Exportieren einer Keytab).
+
+## 1. Zeit synchronisieren
+
+Kerberos **duldet keine Zeitabweichung von mehr als 5 Minuten**. Synchronisieren Sie
+zunächst den grommunio-Server und den Domänencontroller mit derselben Zeitquelle
+(z. B. mit `chronyd`).
+
+## 2. Erstellen Sie das Dienstkonto in Active Directory
+
+Erstellen Sie auf dem Domänencontroller ein Benutzerkonto, das den Dienst „HTTP“ repräsentiert
+(hier: `gromox`). Legen Sie auf der Registerkarte **Konto** den Anmeldenamen des Benutzers auf den
+SPN des Dienstes (`HTTP/gromm1.testdom.local`) im Domänenbereich fest und aktivieren Sie die Option
+**Passwort läuft nie ab**.
+
+![Active Directory account properties: the gromox service account's logon name set to HTTP/gromm1.testdom.local with "password never expires" enabled.](/img/kerberos/ad-account.png)
+
+Aktivieren Sie unter **Kontoeinstellungen** sowohl **„Dieses Konto unterstützt Kerberos AES
+128-Bit-Verschlüsselung“** als auch **„…AES 256-Bit-Verschlüsselung“**.
+
+![Account options with the Kerberos AES 128-bit and 256-bit encryption checkboxes enabled.](/img/kerberos/ad-encryption.png)
+
+Wählen Sie auf der Registerkarte **Delegierung** die Option **„Diesem Benutzer die Delegierung an beliebige
+Dienste anvertrauen (nur Kerberos)“** aus.
+
+![Delegation tab with "Trust this user for delegation to any service (Kerberos only)" selected.](/img/kerberos/ad-delegation.png)
+
+## 3. Registrieren Sie die SPNs
+
+Registrieren Sie auf dem Domänencontroller die Service Principal Names für das
+Konto. Die SPNs `HTTP/<host>` und `HTTP/autodiscover.<domain>` sind dabei die
+wesentlichen Elemente:
+
+```powershell
+setspn -S HTTP/gromm1.testdom.local@TESTDOM.LOCAL gromox
+setspn -S HTTP/autodiscover.testdom.local gromox
+```
+
+Überprüfen Sie die registrierten SPNs (und entfernen Sie sie gegebenenfalls):
+
+```powershell
+setspn -L gromox            # list the account's SPNs
+setspn -D <SPN> gromox      # delete an SPN
+```
+
+![Output of "setspn -L gromox" listing the registered HTTP SPNs for the account.](/img/kerberos/setspn-list.png)
+
+## 4. Exportieren Sie die Keytab-Datei
+
+Exportieren Sie eine Kerberos-Keytab-Datei, die den SPN dem Dienstkonto zuordnet, unter Verwendung von
+AES256-SHA1:
+
+```powershell
+ktpass.exe -princ HTTP/gromm1.testdom.local@TESTDOM.LOCAL ^
+  -mapUser gromox@TESTDOM.LOCAL -pass <PASSWORD> ^
+  -ptype KRB5_NT_PRINCIPAL -crypto AES256-SHA1 -out C:\Temp\krb5.keytab
+```
+
+:::tip[Schlüsselversionsnummer festlegen]
+Sie können die Schlüsselversionsnummer mit `-kvno` (z. B. `-kvno 51`) festlegen. Sie muss mit
+der KVNO übereinstimmen, die das Keytab auf dem grommunio-Server meldet (siehe
+[Überprüfung](#verification--troubleshooting)).
+:::
+
+## 5. Kopieren Sie die Keytab-Datei auf den grommunio-Server
+
+Übertragen Sie `krb5.keytab` als `/etc/krb5.keytab` auf den grommunio-Server (z. B. mit
+WinSCP oder `scp`). Weisen Sie ihm restriktive Berechtigungen zu – er enthält das Schlüsselmaterial
+des Dienstkontos:
+
+```bash
+chown root:root /etc/krb5.keytab
+chmod 600 /etc/krb5.keytab
+```
+
+## 6. Kerberos auf dem Server konfigurieren
+
+Bearbeiten `/etc/krb5.conf`:
+
+```ini
+[libdefaults]
+    default_realm = TESTDOM.LOCAL
+    default_tgs_enctypes = aes256-sha1 aes128-sha1
+    default_tkt_enctypes = aes256-sha1 aes128-sha1
+
+[realms]
+    TESTDOM.LOCAL = {
+        kdc = dc1.TESTDOM.LOCAL
+        admin_server = dc1.TESTDOM.LOCAL
+        default_domain = TESTDOM.LOCAL
+    }
+
+[domain_realm]
+    .testdom.local = TESTDOM.LOCAL
+    testdom = TESTDOM.LOCAL
+```
+
+## 7. SPNEGO in Gromox aktivieren
+
+Bearbeiten `/etc/gromox/http.cfg` und hinzufügen:
+
+```ini
+http_auth_spnego=yes
+
+## GSS provider — the built-in one is the default:
+#gss_program=internal-gss
+
+## …alternatively, use the Squid GSS helper:
+gss_program=/usr/lib/squid/negotiate_kerberos_auth -s GSS_C_NO_NAME
+
+## verbose logging while testing (remove afterwards):
+http_debug=2
+```
+
+Starten Sie den Dienst „HTTP“ neu, damit die Änderungen wirksam werden:
+
+```bash
+systemctl restart gromox-http
+```
+
+## 8. Test von einem Client aus, der einer Domäne angehört
+
+1. Melden Sie sich bei einem in eine Domäne eingebundenen Windows-PC an.
+2. Erstellen Sie ein **neues Outlook-Profil**.
+3. Outlook fordert möglicherweise beim ersten Start **einmal** zur Eingabe von Anmeldedaten auf – geben Sie diese ein, aber
+   **speichern Sie das Passwort nicht**.
+4. Bei nachfolgenden Starts darf Outlook **nicht** zur Eingabe eines Passworts auffordern.
+5. Öffnen Sie den **Verbindungsstatus** von Outlook (halten Sie <kbd>Strg</kbd> gedrückt und klicken Sie auf das
+   Outlook-Systemtray-Symbol → *Verbindungsstatus*). In der Spalte **Authn** sollte
+   **`Nego*`** stehen, was Kerberos/Negotiate bestätigt.
+
+![Outlook connection status with the Authn column showing Nego*, confirming Negotiate/Kerberos authentication.](/img/kerberos/outlook-nego.png)
+
+## Überprüfung und Fehlerbehebung
+
+Überprüfen Sie das Keytab und dessen Schlüsselversionsnummer – die KVNO muss mit den
+grommunio-Serverprotokollen übereinstimmen:
+
+```bash
+klist -k /etc/krb5.keytab          # list principals + KVNO
+klist -e -k /etc/krb5.keytab       # include encryption types
+# e.g. 51 HTTP/gromm1.testdom.local@TESTDOM.LOCAL (aes256-cts-hmac-sha1-96)
+```
+
+Rufen Sie den Squid-GSS-Helper direkt auf:
+
+```bash
+# Print a Negotiate token for the local host
+/usr/lib/squid/negotiate_kerberos_auth_test $(hostname -f)
+
+# Validate a token against the service principal; paste the token when prompted
+/usr/lib/squid/negotiate_kerberos_auth -s HTTP/gromm1.testdom.local@TESTDOM.LOCAL
+# → OK token=… user=testuser1@TESTDOM.LOCAL group=…
+```
+
+Rufen Sie einen ausführlichen Kerberos-Trace für eine Testanmeldung ab:
+
+```bash
+KRB5_TRACE=/dev/stdout kinit -V user@TESTDOM.LOCAL
+```
+
+Auf einem Windows-Client können Sie bei Bedarf einen zusätzlichen Realm einem KDC zuordnen:
+
+```powershell
+ksetup /addkdc EXAMPLE.TEST kdc.example.test
+```
+
+## Anmerkungen
+
+- Die Konfiguration funktioniert problemlos mit **mehreren Domänencontrollern** – stellen Sie lediglich sicher, dass DNS
+  die KDC(s) korrekt auflöst.
+- Die beiden SPNs – `HTTP/<host>` und `HTTP/autodiscover.<domain>` – sind der
+  entscheidende Faktor; die meisten Fehler sind auf einen fehlenden oder falsch eingegebenen SPN, eine
+  Abweichung von mehr als 5 Minuten oder eine Nichtübereinstimmung von KVNO und enctype zwischen dem Keytab und dem DC.
+- Siehe auch die [Übersicht zur Authentifizierung](/admin/architecture/#authentication)
+  , um zu erfahren, wie Gromox neben seinen anderen Authentifizierungs-Backends mit Kerberos zusammenarbeitet.

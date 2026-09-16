@@ -1,0 +1,164 @@
+---
+/**
+ * Landing-page navigation: three audience paths matching the three
+ * documentation sets (the topic switcher) — User, Administration, Development.
+ */
+import { isSingleLocaleRoute } from '../i18n/single-locale-routes.mjs';
+
+const paths = [
+  {
+    title: 'User',
+    href: '/user/',
+    accent: 'azure',
+    desc: 'For everyone using grommunio day to day — the web client and the desktop & mobile apps.',
+    icon: '<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>',
+    links: [
+      { label: 'User Guide', href: '/user/' },
+      { label: 'grommunio Web', href: '/web/' },
+    ],
+  },
+  {
+    title: 'Administration',
+    href: '/admin/',
+    accent: 'teal',
+    desc: 'For administrators — install, configure, operate, migrate and maintain grommunio.',
+    icon: '<path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>',
+    links: [
+      { label: 'Administration', href: '/admin/' },
+      { label: 'Setup guides', href: '/guides/' },
+      { label: 'Command-line (CLI)', href: '/cli/' },
+      { label: 'Migration', href: '/migration/' },
+      { label: 'Knowledge Base', href: '/kb/' },
+      { label: 'Man Pages', href: '/man/' },
+    ],
+  },
+  {
+    title: 'Development',
+    href: '/dev/',
+    accent: 'violet',
+    desc: 'For developers — integrate with and build on grommunio using the Admin REST API.',
+    icon: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+    links: [
+      { label: 'Developer Guide', href: '/dev/' },
+      { label: 'Admin API', href: '/dev/api/' },
+    ],
+  },
+];
+
+// Locale-aware on the landing page: prefix links with the locale and translate
+// the (few) strings, so /de/ links to /de/... and reads in German.
+// The generated API reference exists in the default locale only, so it must not
+// be locale-prefixed (see src/i18n/single-locale-routes.mjs).
+const isDe = /^\/de(\/|$)/.test(Astro.url.pathname);
+const pfx = (href: string) => (isDe && !isSingleLocaleRoute(href) ? `/de${href}` : href);
+const DE: Record<string, string> = {
+  User: 'Benutzer',
+  Development: 'Entwicklung',
+  'For everyone using grommunio day to day — the web client and the desktop & mobile apps.':
+    'Für alle, die grommunio täglich nutzen – der Webclient und die Desktop- & Mobile-Apps.',
+  'For administrators — install, configure, operate, migrate and maintain grommunio.':
+    'Für Administratoren – grommunio installieren, konfigurieren, betreiben, migrieren und warten.',
+  'For developers — integrate with and build on grommunio using the Admin REST API.':
+    'Für Entwickler – grommunio über die Admin-REST-API integrieren und erweitern.',
+  'User Guide': 'Benutzerhandbuch',
+  'Setup guides': 'Einrichtungsleitfäden',
+  'Command-line (CLI)': 'Befehlszeile (CLI)',
+  'Knowledge Base': 'Wissensdatenbank',
+  'Developer Guide': 'Entwicklerhandbuch',
+};
+const tr = (s: string) => (isDe && DE[s]) || s;
+---
+
+<div class="gx-paths not-content">
+  {paths.map((p) => (
+    <div class="gx-path" data-accent={p.accent}>
+      <a class="gx-path__head" href={pfx(p.href)}>
+        <span class="gx-path__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" set:html={p.icon} />
+        </span>
+        <span class="gx-path__heading">
+          <span class="gx-path__title">{tr(p.title)}<span class="gx-path__go" aria-hidden="true">→</span></span>
+          <span class="gx-path__desc">{tr(p.desc)}</span>
+        </span>
+      </a>
+      <ul class="gx-path__links">
+        {p.links.map((l) => (
+          <li><a href={pfx(l.href)}>{tr(l.label)}</a></li>
+        ))}
+      </ul>
+    </div>
+  ))}
+</div>
+
+<style>
+  .gx-paths {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+    margin-top: 2.5rem;
+  }
+  @media (min-width: 60rem) { .gx-paths { grid-template-columns: repeat(3, 1fr); } }
+
+  .gx-path { --ca: var(--gx-azure-300); --ca-strong: var(--gx-azure-500); }
+  .gx-path[data-accent='teal'] { --ca: var(--gx-teal-300); --ca-strong: var(--gx-teal-500); }
+  .gx-path[data-accent='violet'] { --ca: var(--gx-violet-300); --ca-strong: var(--gx-violet-500); }
+  :root[data-theme='light'] .gx-path { --ca: var(--gx-azure-700); }
+  :root[data-theme='light'] .gx-path[data-accent='teal'] { --ca: var(--gx-teal-700); }
+  :root[data-theme='light'] .gx-path[data-accent='violet'] { --ca: var(--gx-violet-700); }
+
+  .gx-path {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+    padding: 1.6rem 1.5rem 1.4rem;
+    border-radius: 1.1rem;
+    background-color: color-mix(in srgb, var(--sl-color-white) 2%, transparent);
+    border: 1px solid var(--sl-color-hairline-light);
+    transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s, transform 0.2s;
+  }
+  .gx-path:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--ca-strong) 45%, transparent);
+    background-color: color-mix(in srgb, var(--ca-strong) 5%, transparent);
+    box-shadow: 0 18px 50px -26px color-mix(in srgb, var(--ca-strong) 60%, transparent);
+  }
+
+  .gx-path__head { display: flex; gap: 1rem; align-items: flex-start; text-decoration: none; color: var(--sl-color-white); }
+  .gx-path__icon {
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 2.85rem; height: 2.85rem; border-radius: 0.8rem;
+    color: var(--ca);
+    background: color-mix(in srgb, var(--ca-strong) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ca-strong) 28%, transparent);
+  }
+  .gx-path__icon svg { width: 1.45rem; height: 1.45rem; }
+  .gx-path__heading { display: flex; flex-direction: column; gap: 0.35rem; }
+  .gx-path__title { font-weight: 600; font-size: 1.15rem; line-height: 1.2; }
+  .gx-path__go { color: var(--ca); margin-left: 0.4rem; transition: margin-left 0.2s; display: inline-block; }
+  .gx-path__head:hover .gx-path__go { margin-left: 0.7rem; }
+  .gx-path__desc { color: var(--sl-color-gray-3); font-size: 0.9rem; line-height: 1.5; }
+
+  .gx-path__links {
+    list-style: none; padding: 0; margin: 0;
+    display: flex; flex-wrap: wrap; gap: 0.5rem;
+    border-top: 1px solid var(--sl-color-hairline);
+    padding-top: 1.1rem;
+  }
+  .gx-path__links a {
+    display: inline-block;
+    font-size: 0.82rem;
+    padding: 0.28rem 0.65rem;
+    border-radius: 0.5rem;
+    color: var(--sl-color-gray-2);
+    background: color-mix(in srgb, var(--sl-color-white) 4%, transparent);
+    border: 1px solid var(--sl-color-hairline-light);
+    text-decoration: none;
+    transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+  }
+  .gx-path__links a:hover {
+    color: var(--ca);
+    border-color: color-mix(in srgb, var(--ca-strong) 40%, transparent);
+    background: color-mix(in srgb, var(--ca-strong) 8%, transparent);
+  }
+</style>

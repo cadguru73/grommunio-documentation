@@ -1,0 +1,13 @@
+{
+  "_README": "Per-locale documentation translation overrides, keyed by the EN source string. Applied verbatim AFTER DeepL in scripts/translate.mjs, so curated wording survives every re-translation. Add a \"<locale>\": { \"<EN source>\": \"<translation>\" } block; keys must match the trimmed EN string exactly. Product names and protocols are already kept verbatim by the PRESERVE list in translate.mjs — use this file only for phrasing/term choices DeepL gets wrong. Prefer fixing the EN source when a change should apply to every language.",
+  "de": {
+    "Overview": "Übersicht",
+    "Quickstart": "Schnellstart",
+    "Guided installation": "Geführte Installation",
+    "Manual installation": "Manuelle Installation",
+    "Container installation": "Container-Installation",
+    "Troubleshooting": "Fehlerbehebung",
+    "Roadmap": "Roadmap",
+    "Release Notes": "Release Notes"
+  }
+}

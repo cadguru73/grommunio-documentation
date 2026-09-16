@@ -1,0 +1,59 @@
+{
+  "name": "grommunio-documentation",
+  "type": "module",
+  "private": true,
+  "versionComment": "Deliberately no `version` field: this package is never published, and a stored semver would only ever be stale (it made every build report 1.0.0). The documentation version is derived from the checked-out commit at build time — see src/version.mjs and `npm run docs:version`.",
+  "description": "grommunio documentation — Astro + Starlight, branded to match grommunio.com. Multi-book docs with global search, auto-generated man pages / admin CLI / OpenAPI, and PDF/EPUB exports.",
+  "scripts": {
+    "dev": "astro dev --port 4330",
+    "start": "astro dev --port 4330",
+    "prebuild": "node -e \"import('./src/version.mjs').then(v=>console.log('grommunio-documentation '+v.DOC_BUILD_ID))\"",
+    "build": "astro build",
+    "docs:version": "node src/version.mjs",
+    "preview": "astro preview --host --port 4330",
+    "serve": "astro build && astro preview --host --port 4330",
+    "astro": "astro",
+    "check": "astro check",
+    "gen:man": "node scripts/gen-man-pages.mjs",
+    "gen:cli": "node scripts/gen-admin-cli.mjs",
+    "gen:openapi": "node scripts/fetch-openapi.mjs",
+    "gen:diagrams": "node scripts/gen-diagrams.mjs",
+    "gen:dev": "node scripts/gen-dev-resources.mjs",
+    "gen:all": "node scripts/gen-man-pages.mjs && node scripts/gen-admin-cli.mjs && node scripts/fetch-openapi.mjs && node scripts/gen-diagrams.mjs && node scripts/gen-dev-resources.mjs",
+    "pdf": "node scripts/gen-pdf.mjs",
+    "epub": "node scripts/gen-epub.mjs",
+    "translate": "node scripts/translate.mjs",
+    "check:links": "node scripts/check-links.mjs"
+  },
+  "dependencies": {
+    "@astrojs/markdown-remark": "^7.3.1",
+    "@astrojs/starlight": "^0.42.1",
+    "@iconify-json/circle-flags": "^1.2.11",
+    "@iconify-json/lucide": "^1.2.132",
+    "astro": "^7.3.2",
+    "astro-icon": "^1.2.0",
+    "sharp": "^0.35.4",
+    "starlight-openapi": "^0.26.2",
+    "starlight-sidebar-topics": "^0.9.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "@playwright/test": "^1.63.0",
+    "deepl-node": "^1.28.0",
+    "github-slugger": "^2.0.0",
+    "mermaid": "^11.17.2",
+    "playwright": "^1.63.0",
+    "typescript": "^6.0.3",
+    "yaml": "^2.9.1"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "overridesComment": "Security fixes for transitive build-time dependencies (none reaches the browser). httpsnippet (via starlight-openapi) still pulls form-data <4.0.6 = GHSA-hmw2-7cc7-3qxx; `npm audit fix --force` would instead downgrade starlight-openapi, so the fixed transitive is pinned directly. Re-check on every dependency bump; drop an entry once the parent ships the fix itself.",
+  "overrides": {
+    "httpsnippet": {
+      "form-data": "^4.0.6"
+    }
+  },
+  "devDependenciesComment": "mermaid is held at 11.x on purpose: 12.0 changed text wrapping and layout so much (even with layout:dagre / look:classic pinned in scripts/gen-diagrams.mjs) that every architecture diagram re-flowed into tall, narrow, hard-to-read shapes. Re-evaluate on a later 12.x by running `npm run gen:diagrams` and comparing public/img/arch/*.svg before committing."
+}

@@ -1,0 +1,52 @@
+---
+title: grommunio Administration
+description: The administrator manual for grommunio — install, configure, operate, scale and migrate the groupware suite.
+sidebar:
+  label: Overview
+  order: 0
+---
+
+Everything you need to **deploy, operate and scale grommunio** — from a first
+appliance boot to multi-node, highly available clusters. grommunio is a complete
+communication and collaboration suite (e-mail, calendaring, contacts, tasks,
+notes, video meetings, chat and file management).
+
+## Where to start
+
+New to grommunio? Read the **[Introduction](/admin/introduction/)** for the
+concepts, then follow the **[Quickstart](/admin/quickstart/)** to stand up an
+appliance and reach first login — or pick the installation method that fits your
+environment from the cards below.
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard title="Introduction" href="/admin/introduction/" description="What grommunio is, its components, and how the pieces fit together." />
+  <LinkCard title="Quickstart" href="/admin/quickstart/" description="Stand up a grommunio appliance and reach first login in minutes." />
+  <LinkCard title="Guided installation" href="/admin/installation/" description="The full appliance (ISO/OVA) walkthrough with the CUI setup wizard." />
+  <LinkCard title="Manual installation" href="/admin/manual_core/" description="Install the base and core packages by hand for custom integrations." />
+  <LinkCard title="Container installation" href="/admin/container_core/" description="Run grommunio with Docker Compose (gromox-container)." />
+  <LinkCard title="Administration" href="/admin/administration/" description="Day-to-day management in the Admin UI — domains, users, roles, configuration." />
+  <LinkCard title="Architecture" href="/admin/architecture/" description="Components, protocols, the multi-server design and load-balancer examples." />
+  <LinkCard title="High availability" href="/admin/high-availability/" description="A reference Pacemaker/DRBD cluster with a floating IP." />
+  <LinkCard title="Setup guides" href="/guides/" description="Step-by-step guides for antispam, SSO, Meet, Chat, Files & Office, Archive, mobile devices and backup." />
+  <LinkCard title="Command-line (CLI)" href="/cli/" description="Manage grommunio from the shell — grommunio-admin and the gromox-* tools." />
+  <LinkCard title="Migration" href="/migration/" description="Move mailboxes from Exchange, Kopano and other systems." />
+  <LinkCard title="Knowledge Base" href="/kb/" description="Focused how-tos and troubleshooting for specific topics." />
+</CardGrid>
+
+## Audience
+
+This manual is for **system administrators** installing and operating grommunio.
+It assumes:
+
+- An understanding of Linux, e-mail (e.g. SMTP), networking and DNS.
+- General familiarity with the Linux operating system.
+- Experience managing communication and/or collaboration solutions.
+
+## Offline reading
+
+This section is also available to download for offline use:
+
+- [Download as PDF](/pdf/grommunio-admin.pdf)
+- [Download as EPUB](/epub/grommunio-admin.epub)
